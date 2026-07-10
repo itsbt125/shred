@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shred — file</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="site">
+    <div class="brand">
+        <a href="/" class="logo">shred</a>
+      <span class="tagline">ephemeral file sharing &middot; <a href="https://github.com/itsbt125/shred">free &amp; open source</a></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="file-card">
+      <div class="file-name" id="file-name">loading...</div>
+      <div class="file-meta" id="file-meta"></div>
+
+      <div class="password-gate" id="password-gate" hidden>
+        <div class="field-label">passphrase</div>
+        <div class="password-input-wrap">
+          <input type="password" id="decrypt-password" placeholder="enter passphrase">
+          <button type="button" id="password-toggle-btn" class="password-toggle-btn" aria-label="show passphrase">show</button>
+        </div>
+      </div>
+
+      <button class="btn btn-block" id="download-btn" disabled>download</button>
+      <div class="upload-progress" id="download-progress"><div class="upload-progress-fill" id="download-progress-fill"></div></div>
+      <div class="download-status" id="download-status"></div>
+
+      <div class="report-row">
+        <button type="button" id="report-btn" class="link-report">report abuse</button>
+        <span class="report-status" id="report-status"></span>
+      </div>
+    </div>
+
+    <a href="/" class="link-secondary">&larr; upload your own file</a>
+    <a href="/terms" class="nav-link">terms &amp; abuse policy</a>
+    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
+  </main>
+
+</div>
+
+<script id="config-data" type="application/json">{{ config_json|safe }}</script>
+<script src="/static/crypto.js"></script>
+<script src="/static/script.js"></script>
+</body>
+</html>

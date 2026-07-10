@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shred — admin</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="site">
+    <div class="brand">
+        <a href="/" class="logo">shred</a>
+      <span class="tagline">admin</span>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- login gate -->
+    <section id="admin-login" class="admin-login">
+      <div class="field-label">admin token</div>
+      <div class="password-input-wrap">
+        <input type="password" id="admin-token-input" placeholder="paste your admin token" autocomplete="off">
+      </div>
+      <button class="btn btn-block" id="admin-login-btn">unlock</button>
+      <div class="admin-login-error" id="admin-login-error"></div>
+    </section>
+
+    <!-- dashboard -->
+    <section id="admin-dashboard" hidden>
+
+      <div class="admin-bar">
+        <button class="admin-bar-btn" id="admin-refresh">&#8635; refresh</button>
+        <button class="admin-bar-btn admin-bar-btn-logout" id="admin-logout">logout</button>
+      </div>
+
+      <h2 class="admin-h">overview</h2>
+      <div class="status-grid" id="admin-overview"></div>
+
+      <h2 class="admin-h" id="token-section-h" hidden>upload token</h2>
+      <div class="admin-token-box" id="admin-token-box" hidden>
+        <div class="admin-token-value" id="admin-token-value">hidden</div>
+        <div class="admin-token-meta" id="admin-token-meta"></div>
+        <div class="admin-token-actions">
+          <button class="btn" id="token-reveal">reveal current</button>
+          <button class="copy-btn" id="token-copy" hidden>copy</button>
+          <button class="btn btn-danger" id="token-rotate">rotate now</button>
+        </div>
+      </div>
+
+      <h2 class="admin-h">stored files <span class="admin-count" id="files-count"></span></h2>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="files-table">
+          <thead><tr><th>id</th><th>size</th><th>uploaded</th><th>expires</th><th>dl</th><th>pw</th><th>status</th><th></th></tr></thead>
+          <tbody id="files-body"></tbody>
+        </table>
+        <div class="admin-empty" id="files-empty" hidden>no files stored</div>
+      </div>
+
+      <h2 class="admin-h">abuse reports <span class="admin-count" id="reports-count"></span></h2>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="reports-table">
+          <thead><tr><th>when</th><th>file id</th><th>reason</th><th>ip</th><th>action</th></tr></thead>
+          <tbody id="reports-body"></tbody>
+        </table>
+        <div class="admin-empty" id="reports-empty" hidden>no reports</div>
+      </div>
+
+    </section>
+
+    <a href="/status" class="nav-link">status</a>
+    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
+  </main>
+
+</div>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

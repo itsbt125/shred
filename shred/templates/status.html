@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shred — status</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="site">
+    <div class="brand">
+        <a href="/" class="logo">shred</a>
+      <span class="tagline">ephemeral file sharing &middot; <a href="https://github.com/itsbt125/shred">free &amp; open source</a></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="status-grid" id="status-root">
+      <div class="status-indicator" id="status-indicator">
+        <span class="dot operational" id="status-dot">&#9679;</span>
+        <span class="status-text" id="status-text">loading...</span>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-uptime">--</div>
+        <div class="stat-label">uptime</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-files">--</div>
+        <div class="stat-label">files stored</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-data">--</div>
+        <div class="stat-label">total data</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-uploads">--</div>
+        <div class="stat-label">uploads</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-downloads">--</div>
+        <div class="stat-label">downloads</div>
+      </div>
+      <div class="stat-card stat-limits">
+        <div class="stat-value" id="stat-limits">10/min</div>
+        <div class="stat-label">rate limits (up / dl)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-access">--</div>
+        <div class="stat-label">upload access</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-rotation">--</div>
+        <div class="stat-label">token rotation</div>
+      </div>
+    </div>
+    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
+  </main>
+
+</div>
+
+<script src="/static/status.js"></script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shred — temporary file sharing</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="site">
+    <div class="brand">
+        <a href="/" class="logo">shred</a>
+      <span class="tagline">ephemeral file sharing &middot; <a href="https://github.com/itsbt125/shred">free &amp; open source</a></span>
+    </div>
+  </header>
+
+  <main>
+    <p class="subtext">upload a file, get a link, share it. files disappear on their own.</p>
+    <section id="state-upload" class="state">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="choose a file to upload">
+        <div class="primary" id="dropzone-primary">click to browse or drag a file here</div>
+        <div class="secondary" id="dropzone-secondary">max {{ max_file_size_display }}</div>
+      </div>
+      <input type="file" id="file-input" class="hidden">
+
+      <div class="inline-options">
+        <label class="opt">
+          <span>expires</span>
+          <select id="expiry-select">
+            {% for opt in expiry_options %}
+            <option{% if opt.get("default") %} selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="strip-metadata" checked>
+          <span>strip metadata</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="randomize-name" checked>
+          <span>randomize name</span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="password-toggle">
+          <span>password</span>
+        </label>
+      </div>
+
+      <div class="passphrase-row" id="passphrase-row" hidden>
+        <input type="password" id="password-input" placeholder="passphrase (blank = auto-generate 5 words)">
+      </div>
+
+      {% if upload_token_required %}
+      <div class="passphrase-row">
+        <input type="password" id="upload-token-input" placeholder="upload token (required on this instance)" autocomplete="off">
+      </div>
+      {% endif %}
+
+      <div class="upload-actions">
+        <button class="btn btn-block" id="upload-btn" disabled>upload</button>
+        <div class="upload-progress" id="upload-progress"><div class="upload-progress-fill" id="upload-progress-fill"></div></div>
+      </div>
+    </section>
+
+    <section id="state-result" class="state" hidden>
+      <div class="result-status" id="result-status">done.</div>
+
+      <div class="field-label">share link</div>
+      <div class="result-link">
+        <div class="result-link-value" id="share-link"></div>
+        <button class="copy-btn" data-copy-target="share-link">copy</button>
+      </div>
+
+      <div class="result-passphrase-wrap" id="result-passphrase-wrap" hidden>
+        <div class="field-label result-passphrase-label">passphrase</div>
+        <div class="result-passphrase">
+          <span class="rp-value" id="passphrase"></span>
+          <button class="copy-btn" data-copy-target="passphrase">copy</button>
+        </div>
+      </div>
+
+      <div class="result-meta" id="result-meta"></div>
+
+      <p class="warning-note" id="warning-note">save this link — it won't be shown again.</p>
+
+      <button class="link-secondary" id="reset-btn">&uarr; upload another</button>
+    </section>
+
+    <section class="info-blurb">
+      <p>files are encrypted in your browser before upload. the server never sees your plaintext, keys, or passwords.</p>
+      <ul>
+        <li>zero-knowledge encryption (AES-256-GCM)</li>
+        <li>encrypted filenames — server never knows what you're sharing</li>
+        <li>your link IS your key — anyone with the URL can decrypt (unless password-protected)</li>
+        <li>password mode uses 5 Diceware words (~64 bits entropy)</li>
+        <li>strip EXIF/GPS from images</li>
+        <li>no accounts, no tracking, no logs</li>
+        <li>files auto-delete on expiry or after download</li>
+        <li>max file size: {{ max_file_size_display }}</li>
+        <li><a href="https://github.com/itsbt125/shred">free &amp; open source</a> — host your own instance with any config</li>
+      </ul>
+    </section>
+
+    <a href="/status" class="nav-link">status</a>
+    <a href="/terms" class="nav-link">terms &amp; abuse policy</a>
+    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
+  </main>
+
+</div>
+
+<script id="config-data" type="application/json">{{ config_json|safe }}</script>
+<script src="/static/crypto.js"></script>
+<script src="/static/script.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# shred_ behind Caddy (automatic HTTPS). App runs via gunicorn on 127.0.0.1:8000.
+#
+#   gunicorn --workers 2 --bind 127.0.0.1:8000 --timeout 3600 server:app
+#
+# Set TRUSTED_PROXY_COUNT=1 in .env so the app sees the real client IP.
+#
+# Caddy sets X-Forwarded-For/-Proto and has no default body size limit, so
+# unlike nginx there's nothing extra to configure for 2 GB uploads.
+
+shred.example.com {
+	# /admin is already gated by ADMIN_TOKEN. Uncomment to also lock it to an IP/VPN.
+	# @admin_blocked {
+	#     path /admin /api/admin/*
+	#     not remote_ip 203.0.113.7   # your home / VPN IP
+	# }
+	# respond @admin_blocked 403
+
+	reverse_proxy 127.0.0.1:8000
+}

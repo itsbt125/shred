@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shred — terms &amp; abuse policy</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="site">
+    <div class="brand">
+        <a href="/" class="logo">shred</a>
+      <span class="tagline">ephemeral file sharing &middot; <a href="https://github.com/itsbt125/shred">free &amp; open source</a></span>
+    </div>
+  </header>
+
+  <main>
+    <p class="subtext">terms of use &amp; acceptable use policy</p>
+
+    <div class="legal">
+      <p>
+        shred is a free, no-account tool for sharing temporary files. files are
+        encrypted in your browser before upload — the operator can't read your
+        file contents, filenames, keys, or passphrases. by uploading or
+        downloading, you agree to the terms below.
+      </p>
+
+      <h2>what you may not use shred for</h2>
+      <p>you agree not to upload, share, or link to content that:</p>
+      <ul>
+        <li>is child sexual abuse material (CSAM), or sexualizes minors in any way</li>
+        <li>is malware, ransomware, phishing kits, or meant to compromise other systems</li>
+        <li>you don't have the right to share (copyright, trade secrets, someone else's personal data)</li>
+        <li>facilitates violence, terrorism, trafficking, or other serious crimes</li>
+        <li>violates any applicable law in your jurisdiction or the operator's</li>
+      </ul>
+
+      <h2>zero-knowledge isn't a free pass</h2>
+      <p>
+        client-side encryption protects your privacy; it's not a license to
+        store illegal content. the operator hosts and transmits the encrypted
+        data and will act on valid reports and legal process.
+      </p>
+
+      <h2>reporting abuse &amp; takedowns</h2>
+      <p>
+        every file has its own link. anyone holding a link can report the file
+        using <strong>report abuse</strong> on its download page — this pauses
+        downloads immediately, pending review, without the operator ever
+        needing to decrypt it. reported files are then reviewed and either
+        removed or restored. you can also send a takedown or law-enforcement
+        request to <a href="mailto:{{ abuse_contact }}">{{ abuse_contact }}</a>.
+      </p>
+
+      <h2>retention</h2>
+      <ul>
+        <li>files auto-delete at their chosen expiry (up to {{ max_expiry_display }}) or on download limit; reported files are paused for review</li>
+        <li>no accounts, no content logging — minimal operational metadata may be kept to respond to abuse reports and legal process</li>
+      </ul>
+
+      <h2>no warranty</h2>
+      <p>
+        shred is provided as-is, with no guarantee of availability, delivery,
+        or durability. don't use it as your only copy of anything. the operator
+        isn't liable for lost data or how others use the service.
+      </p>
+    </div>
+
+    <a href="/" class="nav-link">&larr; back to shred</a>
+    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
+  </main>
+
+</div>
+</body>
+</html>

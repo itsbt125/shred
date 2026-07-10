@@ -1,0 +1,39 @@
+[Unit]
+Description=shred — zero-knowledge ephemeral file sharing
+After=network.target
+
+[Service]
+Type=simple
+User=shred
+Group=shred
+WorkingDirectory=/opt/shred
+EnvironmentFile=/opt/shred/.env
+
+# Single worker — this project is designed for a single VPS, not horizontal scale.
+ExecStart=/opt/shred/venv/bin/gunicorn --workers 1 --bind 127.0.0.1:8000 --timeout 3600 server:app
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/shred/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
