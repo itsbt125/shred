@@ -51,6 +51,18 @@ def init_db():
         )
     """)
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    # A plain in-memory rate limiter breaks under multiple gunicorn worker
+    # processes — each process has its own separate memory, so the
+    # effective limit silently multiplies by the worker count instead of
+    # being enforced globally. The DB is the only state shared across
+    # workers, so it's the source of truth here too.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS rate_limit_hits (
+            bucket TEXT NOT NULL,
+            ts REAL NOT NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_ts ON rate_limit_hits(bucket, ts)")
     db.execute("""
         CREATE TABLE IF NOT EXISTS pending_uploads (
             upload_id TEXT PRIMARY KEY,

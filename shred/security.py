@@ -1,27 +1,35 @@
 import secrets
-import threading
 import time
-from collections import defaultdict
 
 from flask import jsonify, request
 
 from shred import config
 from shred.db import get_db
 
-_rate_limits = defaultdict(list)
-_rate_lock = threading.Lock()
-
 
 def rate_limit(key, max_count):
     now = time.time()
-    with _rate_lock:
-        entries = _rate_limits[key]
-        while entries and entries[0] < now - config.RATE_WINDOW:
-            entries.pop(0)
-        if len(entries) >= max_count:
+    cutoff = now - config.RATE_WINDOW
+
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute("DELETE FROM rate_limit_hits WHERE bucket = ? AND ts < ?", (key, cutoff))
+        count = db.execute(
+            "SELECT COUNT(*) AS c FROM rate_limit_hits WHERE bucket = ?", (key,)
+        ).fetchone()["c"]
+        if count >= max_count:
+            db.execute("ROLLBACK")
             return False
-        entries.append(now)
+        db.execute("INSERT INTO rate_limit_hits (bucket, ts) VALUES (?, ?)", (key, now))
+        db.execute("COMMIT")
         return True
+    except Exception:
+        try:
+            db.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
 
 
 def get_current_rotating_token(db):

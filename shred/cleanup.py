@@ -22,6 +22,11 @@ def cleanup_expired():
                 db.execute("DELETE FROM files WHERE id = ?", (row["id"],))
             db.execute("DELETE FROM tokens WHERE expires < ?", (now,))
 
+            # rate_limit() only prunes the specific bucket it's currently
+            # checking, so an IP that stops making requests would
+            # otherwise leave its old hit rows behind forever.
+            db.execute("DELETE FROM rate_limit_hits WHERE ts < ?", (now - config.RATE_WINDOW,))
+
             # Chunked uploads abandoned mid-transfer (browser closed, network
             # died) never reach /api/upload/finish, so their partial file
             # and DB row would otherwise sit around forever.
