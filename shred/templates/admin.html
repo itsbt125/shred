@@ -36,6 +36,7 @@
       <div class="admin-bar">
         <button class="admin-bar-btn" id="admin-refresh">&#8635; refresh</button>
         <button class="admin-bar-btn admin-bar-btn-logout" id="admin-logout">logout</button>
+        <span class="admin-refresh-error" id="admin-refresh-error"></span>
       </div>
 
       <h2 class="admin-h">overview</h2>
@@ -59,6 +60,7 @@
           <tbody id="files-body"></tbody>
         </table>
         <div class="admin-empty" id="files-empty" hidden>no files stored</div>
+        <button class="admin-bar-btn" id="files-load-more" hidden>load more</button>
       </div>
 
       <h2 class="admin-h">abuse reports <span class="admin-count" id="reports-count"></span></h2>
@@ -68,6 +70,7 @@
           <tbody id="reports-body"></tbody>
         </table>
         <div class="admin-empty" id="reports-empty" hidden>no reports</div>
+        <button class="admin-bar-btn" id="reports-load-more" hidden>load more</button>
       </div>
 
     </section>

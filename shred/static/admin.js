@@ -108,12 +108,19 @@
     }
   }
 
-  function renderFiles(list, now) {
+  // offset is how many rows have been loaded so far (also the next page's
+  // offset param); total comes from the server's COUNT(*) each response.
+  var filesState = { offset: 0, total: 0 };
+  var reportsState = { offset: 0, total: 0 };
+
+  function renderFiles(list, now, append) {
     var body = document.getElementById("files-body");
     var empty = document.getElementById("files-empty");
-    body.textContent = "";
-    document.getElementById("files-count").textContent = list.length ? "(" + list.length + ")" : "";
-    empty.hidden = list.length > 0;
+    if (!append) body.textContent = "";
+    document.getElementById("files-count").textContent =
+      filesState.offset ? "(" + filesState.offset + (filesState.total > filesState.offset ? " of " + filesState.total : "") + ")" : "";
+    empty.hidden = filesState.offset > 0;
+    document.getElementById("files-load-more").hidden = filesState.offset >= filesState.total;
 
     list.forEach(function (f) {
       var tr = document.createElement("tr");
@@ -149,12 +156,14 @@
     });
   }
 
-  function renderReports(list, now) {
+  function renderReports(list, now, append) {
     var body = document.getElementById("reports-body");
     var empty = document.getElementById("reports-empty");
-    body.textContent = "";
-    document.getElementById("reports-count").textContent = list.length ? "(" + list.length + ")" : "";
-    empty.hidden = list.length > 0;
+    if (!append) body.textContent = "";
+    document.getElementById("reports-count").textContent =
+      reportsState.offset ? "(" + reportsState.offset + (reportsState.total > reportsState.offset ? " of " + reportsState.total : "") + ")" : "";
+    empty.hidden = reportsState.offset > 0;
+    document.getElementById("reports-load-more").hidden = reportsState.offset >= reportsState.total;
 
     list.forEach(function (rep) {
       var tr = document.createElement("tr");
@@ -279,16 +288,57 @@
   // --- load / auth ---
 
   function refresh() {
+    filesState = { offset: 0, total: 0 };
+    reportsState = { offset: 0, total: 0 };
     Promise.all([
       adminFetch("/api/admin/overview").then(function (r) { return r.json(); }),
       adminFetch("/api/admin/files").then(function (r) { return r.json(); }),
       adminFetch("/api/admin/reports").then(function (r) { return r.json(); }),
     ]).then(function (results) {
+      document.getElementById("admin-refresh-error").textContent = "";
       var now = results[1].now || Math.floor(Date.now() / 1000);
       renderOverview(results[0]);
-      renderFiles(results[1].files || [], now);
-      renderReports(results[2].reports || [], now);
-    }).catch(function () {});
+      var files = results[1].files || [];
+      filesState.total = results[1].total || 0;
+      filesState.offset = files.length;
+      renderFiles(files, now, false);
+      var reports = results[2].reports || [];
+      reportsState.total = results[2].total || 0;
+      reportsState.offset = reports.length;
+      renderReports(reports, now, false);
+    }).catch(function () {
+      document.getElementById("admin-refresh-error").textContent = "could not refresh — network error";
+    });
+  }
+
+  function loadMoreFiles() {
+    var btn = document.getElementById("files-load-more");
+    btn.disabled = true;
+    adminFetch("/api/admin/files?offset=" + filesState.offset)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        var files = d.files || [];
+        filesState.total = d.total || filesState.total;
+        filesState.offset += files.length;
+        renderFiles(files, d.now || Math.floor(Date.now() / 1000), true);
+      })
+      .catch(function () { btn.disabled = false; });
+  }
+
+  function loadMoreReports() {
+    var btn = document.getElementById("reports-load-more");
+    btn.disabled = true;
+    adminFetch("/api/admin/reports?offset=" + reportsState.offset)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        var reports = d.reports || [];
+        reportsState.total = d.total || reportsState.total;
+        reportsState.offset += reports.length;
+        renderReports(reports, Math.floor(Date.now() / 1000), true);
+      })
+      .catch(function () { btn.disabled = false; });
   }
 
   function enterDashboard() {
@@ -323,6 +373,8 @@
   });
 
   document.getElementById("admin-refresh").addEventListener("click", refresh);
+  document.getElementById("files-load-more").addEventListener("click", loadMoreFiles);
+  document.getElementById("reports-load-more").addEventListener("click", loadMoreReports);
   document.getElementById("admin-logout").addEventListener("click", function () {
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}
     token = null;

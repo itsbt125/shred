@@ -417,11 +417,13 @@ function initViewPage() {
   var contentKey = null;
   var decryptedFilename = null;
 
-  function showExpired() {
-    fileNameEl.textContent = "this file has expired";
+  function showExpired(neverExisted) {
+    fileNameEl.textContent = neverExisted ? "this link doesn't look right" : "this file has expired";
     fileNameEl.style.fontSize = "20px";
     fileNameEl.style.fontFamily = '"Redaction 35", serif';
-    fileMetaEl.textContent = "nothing to recover, nothing to download";
+    fileMetaEl.textContent = neverExisted
+      ? "no file was ever found at this link — check for a typo"
+      : "nothing to recover, nothing to download";
     passwordGate.setAttribute("hidden", "");
     downloadBtn.style.display = "none";
     if (downloadProgress) downloadProgress.classList.remove("active");
@@ -528,7 +530,8 @@ function initViewPage() {
     try {
       var response = await fetch("/api/meta/" + fileId);
       if (response.status === 410) {
-        showExpired();
+        var body410 = await response.json().catch(function () { return {}; });
+        showExpired(body410.error === "not found");
         return;
       }
       if (response.status === 451) {

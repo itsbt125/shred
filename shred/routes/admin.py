@@ -19,6 +19,13 @@ def _parse_limit(default=100):
         return default
 
 
+def _parse_offset():
+    try:
+        return max(int(request.args.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @bp.route("/api/admin/overview")
 def api_admin_overview():
     guard = require_admin()
@@ -117,13 +124,15 @@ def api_admin_files():
         return guard
 
     limit = _parse_limit()
+    offset = _parse_offset()
 
     db = get_db()
     now = int(time.time())
+    total = db.execute("SELECT COUNT(*) AS c FROM files WHERE expiry > ?", (now,)).fetchone()["c"]
     rows = db.execute(
         """SELECT id, size, created, expiry, downloads, max_downloads, has_password, suspended
-           FROM files WHERE expiry > ? ORDER BY suspended DESC, created DESC LIMIT ?""",
-        (now, limit),
+           FROM files WHERE expiry > ? ORDER BY suspended DESC, created DESC LIMIT ? OFFSET ?""",
+        (now, limit, offset),
     ).fetchall()
     files = [{
         "id": r["id"],
@@ -135,7 +144,7 @@ def api_admin_files():
         "has_password": bool(r["has_password"]),
         "suspended": bool(r["suspended"]),
     } for r in rows]
-    return jsonify({"files": files, "now": now})
+    return jsonify({"files": files, "now": now, "total": total, "offset": offset})
 
 
 @bp.route("/api/admin/files/<file_id>", methods=["DELETE"])
@@ -191,11 +200,13 @@ def api_admin_reports():
         return guard
 
     limit = _parse_limit()
+    offset = _parse_offset()
 
     db = get_db()
+    total = db.execute("SELECT COUNT(*) AS c FROM reports").fetchone()["c"]
     rows = db.execute(
-        "SELECT file_id, reason, ip, existed, created FROM reports ORDER BY created DESC LIMIT ?",
-        (limit,),
+        "SELECT file_id, reason, ip, existed, created FROM reports ORDER BY created DESC LIMIT ? OFFSET ?",
+        (limit, offset),
     ).fetchall()
     reports = [{
         "file_id": r["file_id"],
@@ -204,7 +215,7 @@ def api_admin_reports():
         "existed": bool(r["existed"]),
         "created": r["created"],
     } for r in rows]
-    return jsonify({"reports": reports})
+    return jsonify({"reports": reports, "total": total, "offset": offset})
 
 
 @bp.route("/api/status")

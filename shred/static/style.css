@@ -749,6 +749,11 @@ button.link-secondary:hover {
   color: #e88;
 }
 
+.admin-refresh-error {
+  font-size: 13px;
+  color: #e88;
+}
+
 .admin-h {
   color: var(--text);
   font-size: 15px;
@@ -833,6 +838,10 @@ button.link-secondary:hover {
   color: var(--faint);
   font-size: 13px;
   padding: 14px 0;
+}
+
+.admin-table-wrap .admin-bar-btn {
+  margin-top: 8px;
 }
 
 .btn-danger {
