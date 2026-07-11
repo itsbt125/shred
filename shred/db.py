@@ -108,6 +108,13 @@ def get_db():
         g.db = sqlite3.connect(str(config.DB_PATH))
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA journal_mode = WAL")
+        # Every rate-limited request (upload/download/report/admin) and every
+        # download/chunk takes a BEGIN IMMEDIATE write lock, and with multiple
+        # gunicorn workers + threads these serialize on SQLite's single-writer
+        # lock. Without a busy timeout a writer that can't grab the lock
+        # immediately raises "database is locked"; 5s lets it wait its turn
+        # instead of erroring out under normal contention.
+        g.db.execute("PRAGMA busy_timeout = 5000")
     return g.db
 
 

@@ -40,7 +40,13 @@ def _add_security_headers(response):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    # NOTE: deliberately NOT setting Cross-Origin-Embedder-Policy: require-corp.
+    # shred doesn't use SharedArrayBuffer or anything needing cross-origin
+    # isolation, and require-corp gates navigations/downloads in ways that
+    # broke the service-worker streaming download in Firefox. COOP (window
+    # isolation) and CORP (this origin's resources can't be embedded cross-
+    # origin) give the protection that's actually relevant here without that
+    # cost.
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     if request.is_secure:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -85,6 +91,19 @@ def create_app(bootstrap=True):
             app.wsgi_app,
             x_for=config.TRUSTED_PROXY_COUNT,
             x_proto=config.TRUSTED_PROXY_COUNT,
+        )
+    else:
+        # Loud warning: behind the documented nginx reverse proxy without
+        # this set, request.remote_addr is the proxy's IP (e.g. 127.0.0.1)
+        # for *every* client — so all users collapse into one per-IP rate-
+        # limit bucket and any IP allowlist compares against the proxy, not
+        # the real client. Only correct to leave at 0 if the app is directly
+        # internet-facing with no proxy in front.
+        logging.getLogger("shred").warning(
+            "TRUSTED_PROXY_COUNT=0: using the direct peer as the client IP. "
+            "If a reverse proxy sits in front of shred, set TRUSTED_PROXY_COUNT "
+            "to the number of proxies or per-IP rate limiting and IP allowlisting "
+            "will not work correctly."
         )
 
     app.wsgi_app = _StripServerHeader(app.wsgi_app)

@@ -9,7 +9,14 @@ bp = Blueprint("pages", __name__)
 
 
 def _embed_config():
-    return json.dumps(config.client_config())
+    # Embedded verbatim in a <script type="application/json"> block via |safe,
+    # so escape the one sequence that could break out of that element: "</"
+    # (as in "</script>"). Escaping "<" to its JSON unicode form is enough and
+    # keeps the payload valid JSON. Only operator-set values (expiry labels)
+    # can reach here and the CSP already blocks inline script execution, but
+    # this closes the breakout regardless. json.dumps defaults to
+    # ensure_ascii=True, which already escapes U+2028/U+2029.
+    return json.dumps(config.client_config()).replace("<", "\\u003c")
 
 
 @bp.route("/api/config")

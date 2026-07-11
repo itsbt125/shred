@@ -205,6 +205,21 @@ def api_upload_chunk():
             db.execute("ROLLBACK")
             return jsonify({"error": "unexpected chunk index"}), 409
 
+        # bytes_received is the authoritative length of the good prefix of the
+        # partial file. If this chunk's append fails partway (size cap hit,
+        # ENOSPC) we roll back the DB — so we must also truncate the file back
+        # to that offset, or the on-disk length drifts past bytes_received and
+        # every later chunk lands at the wrong position, silently corrupting
+        # the upload.
+        base_len = row["bytes_received"]
+
+        def _truncate_back():
+            try:
+                with open(partial_path, "r+b") as tf:
+                    tf.truncate(base_len)
+            except OSError:
+                pass
+
         written = 0
         try:
             with open(partial_path, "ab") as f:
@@ -212,12 +227,15 @@ def api_upload_chunk():
                     data = chunk_file.stream.read(65536)
                     if not data:
                         break
-                    if row["bytes_received"] + written + len(data) > config.MAX_CIPHERTEXT_SIZE:
+                    if base_len + written + len(data) > config.MAX_CIPHERTEXT_SIZE:
+                        f.close()
+                        _truncate_back()
                         db.execute("ROLLBACK")
                         return jsonify({"error": "file too large"}), 413
                     written += len(data)
                     f.write(data)
         except OSError as e:
+            _truncate_back()
             db.execute("ROLLBACK")
             if e.errno == errno.ENOSPC:
                 return jsonify({"error": "server storage full, try again later"}), 507
@@ -225,7 +243,7 @@ def api_upload_chunk():
 
         db.execute(
             "UPDATE pending_uploads SET bytes_received = ?, next_chunk_index = ? WHERE upload_id = ?",
-            (row["bytes_received"] + written, chunk_index + 1, upload_id),
+            (base_len + written, chunk_index + 1, upload_id),
         )
         db.execute("COMMIT")
     except Exception:

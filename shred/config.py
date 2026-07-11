@@ -57,6 +57,11 @@ MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 1024**3)
 # file on a slow connection, bounded so abandoned sessions don't pile up.
 PENDING_UPLOAD_TTL = _env_int("PENDING_UPLOAD_TTL", 3600)
 
+# Abuse reports are kept for moderation history but pruned eventually so the
+# table can't grow without bound (every report — including ones for
+# already-gone files — inserts a row). Default 90 days; set 0 to keep forever.
+REPORTS_RETENTION_SECONDS = _env_int("REPORTS_RETENTION_SECONDS", 90 * 86400)
+
 TRUSTED_PROXY_COUNT = _env_int("TRUSTED_PROXY_COUNT", 0)
 
 ABUSE_CONTACT = os.environ.get("ABUSE_CONTACT", "abuse@example.com")

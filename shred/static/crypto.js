@@ -318,24 +318,57 @@ async function getActiveDownloadServiceWorker() {
 // buffer, so a drain loop running faster than the SW consumes the stream
 // would silently reintroduce full-file buffering. Not worth it for
 // marginal error visibility; removed.
+function supportsTransferableStreams() {
+  // Feature-detect transferable ReadableStreams. Older browsers throw
+  // "DataCloneError" when a stream is listed in the transfer array; detecting
+  // up front lets the caller pick the blob fallback instead of half-starting
+  // an SW download that silently produces nothing.
+  try {
+    const rs = new ReadableStream();
+    const mc = new MessageChannel();
+    mc.port1.postMessage(rs, [rs]);
+    mc.port1.close();
+    mc.port2.close();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function saveViaServiceWorker(worker, readableStream, filename, plainSize) {
   const token = crypto.randomUUID();
 
-  // Transfer is atomic: if the browser can't transfer a ReadableStream
-  // (no transferable-streams support), this throws before anything is
-  // sent and readableStream is left untouched, so the caller can fall
-  // back to a different save strategy with the same stream.
+  // Transfer is atomic: if the browser can't transfer a ReadableStream this
+  // throws before anything is sent and readableStream is left untouched, so
+  // the caller can fall back to a different save strategy with the same
+  // stream. (supportsTransferableStreams is checked first by the caller, but
+  // keep the try semantics intact.)
   worker.postMessage(
     { type: "register-stream", token: token, filename: filename, size: plainSize, stream: readableStream },
     [readableStream]
   );
 
-  const a = document.createElement("a");
-  a.href = "/static/__shred_stream__/" + token;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  // Trigger the download by navigating a hidden iframe to the SW-scoped URL,
+  // NOT a top-level `<a download>` click. A service worker reliably
+  // intercepts an iframe's in-scope navigation across browsers — this is the
+  // mechanism StreamSaver.js uses — whereas a top-level download navigation
+  // is the least reliably intercepted case, particularly in Firefox, which
+  // is exactly where the old anchor approach produced "network activity but
+  // no saved file". The iframe also means a failure can't blank out or
+  // navigate away the page the user is looking at. The filename now rides on
+  // the SW response's Content-Disposition, so the iframe needs no download
+  // attribute.
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("hidden", "");
+  iframe.style.display = "none";
+  iframe.src = "/static/__shred_stream__/" + token;
+  document.body.appendChild(iframe);
+  // Once the browser commits the navigation to a download it continues in the
+  // download manager independent of the iframe, so cleaning up after a delay
+  // is safe and avoids leaking an element per download.
+  setTimeout(function () {
+    try { document.body.removeChild(iframe); } catch (e) {}
+  }, 120000);
 }
 
 async function saveViaBlob(readableStream, filename) {
@@ -371,6 +404,11 @@ async function saveViaBlob(readableStream, filename) {
 // whether that's an automation-only artifact or a real Chrome behavior,
 // Chromium is kept on the API that's been verifiable, and the SW path is
 // reserved for browsers that have no other route to a flat-memory save.
+// Returns a short string naming the save path actually taken —
+// "filesystem" | "service-worker" | "blob" | "aborted" — so the caller can
+// show an honest status (e.g. the blob path buffers the whole file in memory
+// and the user should be told, and the SW/FS paths save without a further
+// prompt in some browsers). Throws on real errors (network, decrypt, expiry).
 async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onProgress) {
   const response = await fetch(url);
   if (response.status === 410) throw new Error("expired");
@@ -383,6 +421,8 @@ async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onPr
   });
   const decryptedStream = response.body.pipeThrough(transform);
 
+  // 1. File System Access API (Chromium/Edge): mature, directly observable —
+  //    pipeTo() resolves on success or throws, so failures are visible.
   if ("showSaveFilePicker" in window) {
     let handle;
     try {
@@ -390,28 +430,33 @@ async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onPr
     } catch (e) {
       if (e.name === "AbortError") {
         await decryptedStream.cancel();
-        return;
+        return "aborted";
       }
       throw e;
     }
     const writable = await handle.createWritable();
     await decryptedStream.pipeTo(writable);
-    return;
+    return "filesystem";
   }
 
-  const swWorker = await getActiveDownloadServiceWorker();
-  if (swWorker) {
-    try {
+  // 2. Service worker streaming save (Firefox/Safari and any browser without
+  //    the FS Access API). Only attempt it when the browser can actually
+  //    transfer the stream to the worker AND the worker is active — otherwise
+  //    we'd hand off to a path that silently produces nothing. Fall through
+  //    to the in-memory blob if either precondition fails.
+  if (supportsTransferableStreams()) {
+    const swWorker = await getActiveDownloadServiceWorker();
+    if (swWorker) {
       await saveViaServiceWorker(swWorker, decryptedStream, filename, plainSize);
-      return;
-    } catch (e) {
-      // Transfer of the stream itself failed before anything was sent
-      // (see comment on saveViaServiceWorker) — decryptedStream is still
-      // untouched, fall through to the Blob fallback below.
+      return "service-worker";
     }
   }
 
+  // 3. Last resort: buffer the whole decrypted file in memory as one Blob,
+  //    then save. Works everywhere but peak memory ~= file size, so the
+  //    caller warns the user for large files.
   await saveViaBlob(decryptedStream, filename);
+  return "blob";
 }
 
 // --- filename encryption ---

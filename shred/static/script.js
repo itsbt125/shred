@@ -1,5 +1,23 @@
 // script.js — UI logic + real encrypt/upload/decrypt/download for shred
 
+// Render a " · "-separated meta line into `el` using DOM nodes only — no
+// innerHTML, so nothing here can ever become an HTML/JS injection sink even
+// if a future change routes a string field (filename, server text) through
+// it. `parts` is an array of plain strings.
+function renderMetaLine(el, parts) {
+  el.textContent = "";
+  parts.forEach(function (text, i) {
+    if (i > 0) {
+      var sep = document.createElement("span");
+      sep.textContent = " · ";
+      el.appendChild(sep);
+    }
+    var span = document.createElement("span");
+    span.textContent = text;
+    el.appendChild(span);
+  });
+}
+
 var CONFIG = (function () {
   var el = document.getElementById("config-data");
   try { return el ? JSON.parse(el.textContent) : {}; } catch (e) { return {}; }
@@ -450,12 +468,11 @@ function initViewPage() {
 
   function showFileInfo(m, filename) {
     fileNameEl.textContent = filename;
-    fileMetaEl.innerHTML =
-      "<span>" + formatSize(m.size) + "</span>" +
-      "<span> · </span>" +
-      "<span>uploaded " + formatAgo(m.created) + "</span>" +
-      "<span> · </span>" +
-      "<span>" + formatExpiry(m.expiry) + "</span>";
+    renderMetaLine(fileMetaEl, [
+      formatSize(m.size),
+      "uploaded " + formatAgo(m.created),
+      formatExpiry(m.expiry),
+    ]);
   }
 
   async function doDownload(key, baseIv, filename) {
@@ -464,9 +481,22 @@ function initViewPage() {
     if (downloadProgress) downloadProgress.classList.add("active");
     if (downloadStatus) downloadStatus.textContent = "";
 
+    // The in-memory blob fallback (browsers without the File System Access
+    // API or transferable-stream service-worker support) holds the whole
+    // decrypted file in memory. Warn before starting a large one.
+    var willBufferInMemory =
+      !("showSaveFilePicker" in window) &&
+      !(supportsTransferableStreams() && "serviceWorker" in navigator && window.isSecureContext);
+    var bigFile = meta && meta.size > 500 * 1024 * 1024;
+    if (willBufferInMemory && bigFile && downloadStatus) {
+      downloadStatus.textContent =
+        "heads up: your browser can't stream this to disk, so it will be held in memory while downloading (" +
+        formatSize(meta.size) + "). it may be slow or fail on low-memory devices.";
+    }
+
     try {
       downloadBtn.textContent = "downloading & decrypting...";
-      await streamDownloadDecrypt(
+      var mode = await streamDownloadDecrypt(
         "/api/file/" + fileId,
         meta ? meta.size : 0,
         key,
@@ -477,10 +507,29 @@ function initViewPage() {
         }
       );
 
+      if (mode === "aborted") {
+        // User dismissed the save dialog — reset quietly, no error.
+        downloadBtn.textContent = "download";
+        downloadBtn.removeAttribute("disabled");
+        if (downloadProgress) downloadProgress.classList.remove("active");
+        if (downloadProgressFill) downloadProgressFill.style.width = "0%";
+        if (downloadStatus) downloadStatus.textContent = "";
+        return;
+      }
+
       if (downloadProgressFill) setProgress(downloadProgressFill, 100);
       downloadBtn.textContent = "done";
       downloadBtn.removeAttribute("disabled");
-      if (downloadStatus) downloadStatus.textContent = "decrypted and saved";
+      if (downloadStatus) {
+        // The service-worker and blob paths hand off to the browser's own
+        // download manager and give no completion signal back to the page,
+        // so word the message as "started", not a false "saved".
+        if (mode === "service-worker" || mode === "blob") {
+          downloadStatus.textContent = "decrypted — your download should be saving now (check your browser's downloads)";
+        } else {
+          downloadStatus.textContent = "decrypted and saved";
+        }
+      }
     } catch (e) {
       downloadBtn.textContent = "download";
       downloadBtn.removeAttribute("disabled");
@@ -491,6 +540,9 @@ function initViewPage() {
         else if (e.message === "suspended") downloadStatus.textContent = "this file has been reported — downloads are paused";
         else downloadStatus.textContent = "error: " + e.message;
       }
+      // Surface the real failure for diagnosis — the FF streaming path used
+      // to fail silently; now the actual error reaches the console.
+      try { console.error("shred download failed:", e); } catch (_) {}
       if (e.message === "expired") showExpired();
       if (e.message === "suspended") showSuspended();
     }
@@ -548,10 +600,10 @@ function initViewPage() {
       if (meta.has_password) {
         // Password-protected: show password gate
         fileNameEl.textContent = "encrypted file";
-        fileMetaEl.innerHTML =
-          "<span>" + formatSize(meta.size) + "</span>" +
-          "<span> · </span>" +
-          "<span>" + formatExpiry(meta.expiry) + "</span>";
+        renderMetaLine(fileMetaEl, [
+          formatSize(meta.size),
+          formatExpiry(meta.expiry),
+        ]);
         passwordGate.removeAttribute("hidden");
         downloadBtn.textContent = "decrypt & download";
         downloadBtn.setAttribute("disabled", "disabled");

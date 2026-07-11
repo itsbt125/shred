@@ -7,6 +7,16 @@ from shred import config
 from shred.db import get_db
 
 
+def _safe_compare(a, b):
+    # secrets.compare_digest raises TypeError on a str containing non-ASCII
+    # (e.g. a header with latin-1 bytes > 0x7f). Treat that as a mismatch
+    # rather than letting it bubble up as a 500.
+    try:
+        return secrets.compare_digest(a, b)
+    except TypeError:
+        return False
+
+
 def rate_limit(key, max_count):
     now = time.time()
     cutoff = now - config.RATE_WINDOW
@@ -57,13 +67,13 @@ def rotating_token_valid(provided):
     rows = db.execute("SELECT token FROM tokens WHERE expires > ?", (now,)).fetchall()
     ok = False
     for r in rows:
-        if secrets.compare_digest(provided, r["token"]):
+        if _safe_compare(provided, r["token"]):
             ok = True
     return ok
 
 
 def upload_token_valid(provided):
-    if config.UPLOAD_TOKEN and secrets.compare_digest(provided, config.UPLOAD_TOKEN):
+    if config.UPLOAD_TOKEN and _safe_compare(provided, config.UPLOAD_TOKEN):
         return True
     return rotating_token_valid(provided)
 
@@ -72,7 +82,10 @@ def require_admin():
     ip = request.remote_addr or "unknown"
     if not rate_limit("admin:" + ip, config.ADMIN_RATE_LIMIT):
         return jsonify({"error": "rate limit exceeded"}), 429
-    provided = request.headers.get("X-Admin-Token") or request.args.get("admin_token", "")
-    if not config.ADMIN_TOKEN or not secrets.compare_digest(provided, config.ADMIN_TOKEN):
+    # Header only — never a query param. A token in the query string leaks
+    # into reverse-proxy access logs, browser history, and Referer headers.
+    # admin.js already sends it as X-Admin-Token.
+    provided = request.headers.get("X-Admin-Token", "")
+    if not config.ADMIN_TOKEN or not _safe_compare(provided, config.ADMIN_TOKEN):
         return jsonify({"error": "unauthorized"}), 401
     return None

@@ -15,6 +15,7 @@ def cleanup_expired():
         try:
             db = sqlite3.connect(str(config.DB_PATH))
             db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout = 5000")
             now = int(time.time())
             rows = db.execute("SELECT id FROM files WHERE expiry < ?", (now,)).fetchall()
             for row in rows:
@@ -26,6 +27,14 @@ def cleanup_expired():
             # checking, so an IP that stops making requests would
             # otherwise leave its old hit rows behind forever.
             db.execute("DELETE FROM rate_limit_hits WHERE ts < ?", (now - config.RATE_WINDOW,))
+
+            # Reports are retained for moderation history but not forever —
+            # otherwise the table grows unbounded (rate-limited, but still).
+            if config.REPORTS_RETENTION_SECONDS > 0:
+                db.execute(
+                    "DELETE FROM reports WHERE created < ?",
+                    (now - config.REPORTS_RETENTION_SECONDS,),
+                )
 
             # Chunked uploads abandoned mid-transfer (browser closed, network
             # died) never reach /api/upload/finish, so their partial file
