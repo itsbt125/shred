@@ -1,7 +1,8 @@
 # shred_ behind nginx (TLS terminated here). App runs via gunicorn on 127.0.0.1:8000.
 #
-#   gunicorn --workers 2 --bind 127.0.0.1:8000 --timeout 3600 server:app
+#   gunicorn --workers 2 --worker-class gthread --threads 4 --bind 127.0.0.1:8000 --timeout 3600 server:app
 #
+# (see deploy/shred.service for the actual unit — keep this comment in sync with it)
 # Set TRUSTED_PROXY_COUNT=1 in .env so the app sees the real client IP.
 
 server {

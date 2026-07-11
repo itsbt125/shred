@@ -51,6 +51,22 @@ def init_db():
         )
     """)
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS pending_uploads (
+            upload_id TEXT PRIMARY KEY,
+            bytes_received INTEGER NOT NULL DEFAULT 0,
+            next_chunk_index INTEGER NOT NULL DEFAULT 0,
+            encrypted_filename BLOB NOT NULL,
+            iv BLOB NOT NULL,
+            size INTEGER NOT NULL,
+            expiry INTEGER NOT NULL,
+            max_downloads INTEGER DEFAULT 0,
+            has_password INTEGER DEFAULT 0,
+            salt BLOB,
+            wrapped_key BLOB,
+            created INTEGER NOT NULL
+        )
+    """)
     db.commit()
     db.close()
 

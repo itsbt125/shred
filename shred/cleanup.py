@@ -4,7 +4,7 @@ import threading
 import time
 
 from shred import config
-from shred.storage import remove_blob
+from shred.storage import remove_blob, remove_partial
 
 logger = logging.getLogger("shred.cleanup")
 
@@ -21,6 +21,18 @@ def cleanup_expired():
                 remove_blob(row["id"])
                 db.execute("DELETE FROM files WHERE id = ?", (row["id"],))
             db.execute("DELETE FROM tokens WHERE expires < ?", (now,))
+
+            # Chunked uploads abandoned mid-transfer (browser closed, network
+            # died) never reach /api/upload/finish, so their partial file
+            # and DB row would otherwise sit around forever.
+            stale_cutoff = now - config.PENDING_UPLOAD_TTL
+            pending = db.execute(
+                "SELECT upload_id FROM pending_uploads WHERE created < ?", (stale_cutoff,)
+            ).fetchall()
+            for row in pending:
+                remove_partial(row["upload_id"])
+                db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (row["upload_id"],))
+
             db.commit()
             db.close()
         except Exception:

@@ -32,12 +32,18 @@ MAX_FILE_SIZE = _env_int("MAX_SIZE_BYTES", 2 * 1024**3)
 MAX_CIPHERTEXT_SIZE = MAX_FILE_SIZE + 1024**2
 CLEANUP_INTERVAL = _env_int("CLEANUP_INTERVAL", 300)
 ID_PATTERN = re.compile(r'^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$')
+UPLOAD_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{16,64}$')
 UPLOAD_RATE_LIMIT = _env_int("UPLOAD_RATE_LIMIT", 10)
 DOWNLOAD_RATE_LIMIT = _env_int("DOWNLOAD_RATE_LIMIT", 30)
 REPORT_RATE_LIMIT = _env_int("REPORT_RATE_LIMIT", 5)
 RATE_WINDOW = _env_int("RATE_WINDOW", 60)
 
 MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 1024**3)
+
+# How long a chunked upload session can sit incomplete before the cleanup
+# thread reaps its partial file and DB row. Generous enough for a large
+# file on a slow connection, bounded so abandoned sessions don't pile up.
+PENDING_UPLOAD_TTL = _env_int("PENDING_UPLOAD_TTL", 3600)
 
 TRUSTED_PROXY_COUNT = _env_int("TRUSTED_PROXY_COUNT", 0)
 

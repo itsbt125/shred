@@ -308,19 +308,14 @@ function initUploadPage() {
           filename = randomizeFilename(filename);
         }
 
-        // Phase 2: encrypt
+        // Phase 2: keys + filename encryption (fast, done upfront so the
+        // full metadata is ready before the chunked upload's init call)
         uploadBtn.textContent = "encrypting...";
         var key = await generateContentKey();
         var baseIv = randomBytes(IV_LENGTH);
-
-        var ciphertextBlob = await encryptFile(file, key, baseIv, function (progress) {
-          if (hasProgress) setProgress(uploadProgressFill, progress * 50);
-        });
-
-        // Phase 3: encrypt filename
         var encryptedFilename = await encryptFilename(filename, key);
 
-        // Phase 4: build metadata
+        // Phase 3: build metadata
         var expiryOption = expirySelect ? expirySelect.value : "1 day";
         var expirySeconds = EXPIRY_MAP[expiryOption] || DEFAULT_EXPIRY_SECONDS;
         var expiry = Math.floor(Date.now() / 1000) + expirySeconds;
@@ -334,7 +329,7 @@ function initUploadPage() {
           max_downloads: String(maxDownloads),
         };
 
-        // Phase 5: password handling
+        // Phase 4: password handling
         var isProtected = passwordToggle && passwordToggle.checked;
         var pass = null;
         var keyFragment = null;
@@ -352,17 +347,19 @@ function initUploadPage() {
           keyFragment = await exportKey(key);
         }
 
-        // Include the upload token if this instance requires one.
+        // Upload token, if this instance requires one — sent once at init,
+        // not repeated on every chunk request.
+        var uploadToken = null;
         if (uploadTokenInput && uploadTokenInput.value.trim()) {
-          var token = uploadTokenInput.value.trim();
-          metadata.upload_token = token;
-          try { localStorage.setItem("shred_upload_token", token); } catch (e) {}
+          uploadToken = uploadTokenInput.value.trim();
+          try { localStorage.setItem("shred_upload_token", uploadToken); } catch (e) {}
         }
 
-        // Phase 6: upload
+        // Phase 6: upload — encrypts and POSTs one chunk at a time so
+        // memory stays flat regardless of file size
         uploadBtn.textContent = "uploading...";
-        var result = await uploadCiphertext(ciphertextBlob, metadata, function (progress) {
-          if (hasProgress) setProgress(uploadProgressFill, 50 + progress * 50);
+        var result = await chunkedUploadFile(file, key, baseIv, metadata, uploadToken, function (progress) {
+          if (hasProgress) setProgress(uploadProgressFill, progress * 100);
         });
 
         // Phase 7: show result
@@ -399,6 +396,10 @@ function initViewPage() {
   var fileId = validId(lastPart) ? lastPart : null;
 
   if (!fileId) return;
+
+  // Registered early so it's almost always already active/controlling by
+  // the time the user clicks download, avoiding the controllerchange race.
+  registerDownloadServiceWorker();
 
   var fileNameEl = document.getElementById("file-name");
   var fileMetaEl = document.getElementById("file-meta");
@@ -462,14 +463,17 @@ function initViewPage() {
     if (downloadStatus) downloadStatus.textContent = "";
 
     try {
-      var blob = await downloadCiphertext("/api/file/" + fileId, function (progress) {
-        if (downloadProgressFill) setProgress(downloadProgressFill, progress * 50);
-      });
-
-      downloadBtn.textContent = "decrypting...";
-      await decryptAndSave(blob, key, baseIv, filename, function (progress) {
-        if (downloadProgressFill) setProgress(downloadProgressFill, 50 + progress * 50);
-      });
+      downloadBtn.textContent = "downloading & decrypting...";
+      await streamDownloadDecrypt(
+        "/api/file/" + fileId,
+        meta ? meta.size : 0,
+        key,
+        baseIv,
+        filename,
+        function (progress) {
+          if (downloadProgressFill) setProgress(downloadProgressFill, progress * 100);
+        }
+      );
 
       if (downloadProgressFill) setProgress(downloadProgressFill, 100);
       downloadBtn.textContent = "done";
