@@ -30,6 +30,18 @@ DB_PATH = DATA_DIR / "shred.db"
 
 MAX_FILE_SIZE = _env_int("MAX_SIZE_BYTES", 2 * 1024**3)
 MAX_CIPHERTEXT_SIZE = MAX_FILE_SIZE + 1024**2
+
+# Uploads are chunked client-side (~1MiB ciphertext per request), so no
+# single request needs anywhere near MAX_CIPHERTEXT_SIZE — that cap only
+# applies to the cumulative bytes across a whole upload session, tracked
+# server-side in pending_uploads. This is the actual per-request body
+# size Flask/Werkzeug enforces (app.config["MAX_CONTENT_LENGTH"]) before
+# any route handler runs. Left at the old ~2GB ceiling, every endpoint —
+# including /api/upload/chunk, which has no per-request rate limit by
+# design — would accept multi-gigabyte request bodies before rejecting
+# anything, letting a single connection tie up a worker parsing/spooling
+# gigabytes for no legitimate reason.
+MAX_UPLOAD_CHUNK_BYTES = _env_int("MAX_UPLOAD_CHUNK_BYTES", 2 * 1024**2)
 CLEANUP_INTERVAL = _env_int("CLEANUP_INTERVAL", 300)
 ID_PATTERN = re.compile(r'^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$')
 UPLOAD_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{16,64}$')

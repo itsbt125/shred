@@ -75,7 +75,10 @@ def create_app(bootstrap=True):
         template_folder=str(config.TEMPLATES_DIR),
         static_folder=str(config.STATIC_DIR),
     )
-    app.config["MAX_CONTENT_LENGTH"] = config.MAX_CIPHERTEXT_SIZE
+    # Per-request cap, not per-upload-session — uploads are chunked, so no
+    # single request needs to be anywhere near the full file size. See the
+    # comment on MAX_UPLOAD_CHUNK_BYTES for why this used to be much larger.
+    app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_CHUNK_BYTES
 
     if config.TRUSTED_PROXY_COUNT > 0:
         app.wsgi_app = ProxyFix(
