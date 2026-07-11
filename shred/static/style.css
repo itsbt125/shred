@@ -29,6 +29,18 @@
   box-sizing: border-box;
 }
 
+/* Buttons, links, and other non-text-input controls have no visible
+   focus state otherwise — only text inputs get one, via their own
+   :focus border-color rules below. Keyboard users tabbing through the
+   page need a visible indicator on everything else too. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
 .hidden {
   display: none;
 }
@@ -770,7 +782,6 @@ button.link-secondary:hover {
 
 .admin-token-box {
   border: 1px solid var(--border);
-  border-radius: 8px;
   padding: 16px;
 }
 
@@ -781,7 +792,6 @@ button.link-secondary:hover {
   word-break: break-all;
   padding: 10px 12px;
   background: var(--line);
-  border-radius: 6px;
 }
 
 .admin-token-value.revealed {
@@ -908,6 +918,11 @@ button.link-secondary:hover {
   color: var(--faint);
 }
 
+.badge-active {
+  border-color: var(--text);
+  color: var(--text);
+}
+
 .badge-suspended {
   border-color: #a33;
   color: #e88;
@@ -957,5 +972,48 @@ button.link-secondary:hover {
   *, *::before, *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+/* small screens */
+
+@media (max-width: 480px) {
+  .wrap {
+    padding: 0 16px;
+  }
+
+  .inline-options .opt input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* these are side-by-side flex rows designed for spare width; a shared
+     link or passphrase getting squeezed into a sliver next to a fixed-
+     width button is worse than just stacking them */
+  .result-link,
+  .result-passphrase,
+  .password-input-wrap {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .result-link-value,
+  .result-passphrase .rp-value {
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .result-link .copy-btn,
+  .result-passphrase .copy-btn {
+    width: 100%;
+  }
+
+  .password-input-wrap input {
+    margin-bottom: 0;
+  }
+
+  .password-toggle-btn {
+    border-left: 1px solid var(--border);
+    padding: 10px 14px;
   }
 }
