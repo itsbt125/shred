@@ -3,19 +3,14 @@ import json
 from flask import Blueprint, jsonify, render_template
 
 from shred import config
-from shred.storage import valid_id
+from shred.security import token_gating_effective
+from shred.storage import valid_id, valid_upload_id
 
 bp = Blueprint("pages", __name__)
 
 
 def _embed_config():
-    # Embedded verbatim in a <script type="application/json"> block via |safe,
-    # so escape the one sequence that could break out of that element: "</"
-    # (as in "</script>"). Escaping "<" to its JSON unicode form is enough and
-    # keeps the payload valid JSON. Only operator-set values (expiry labels)
-    # can reach here and the CSP already blocks inline script execution, but
-    # this closes the breakout regardless. json.dumps defaults to
-    # ensure_ascii=True, which already escapes U+2028/U+2029.
+    # Escape "<" so "</script>" can't break out of the embedding <script> block.
     return json.dumps(config.client_config()).replace("<", "\\u003c")
 
 
@@ -28,7 +23,7 @@ def api_config():
 def index():
     return render_template(
         "index.html",
-        upload_token_required=config.token_gating_enabled(),
+        upload_token_required=token_gating_effective(),
         max_file_size_display=config.format_bytes(config.MAX_FILE_SIZE),
         expiry_options=config.EXPIRY_OPTIONS,
         config_json=_embed_config(),
@@ -45,6 +40,13 @@ def view_file(file_id):
     if not valid_id(file_id):
         return render_template("expired.html"), 404
     return render_template("view.html", config_json=_embed_config())
+
+
+@bp.route("/g/<group_id>")
+def view_group(group_id):
+    if not valid_upload_id(group_id):
+        return render_template("expired.html"), 404
+    return render_template("group.html", config_json=_embed_config())
 
 
 @bp.route("/admin")

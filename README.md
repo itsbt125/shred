@@ -19,6 +19,19 @@ downloads and decrypts, and the file deletes itself on expiry or after download.
 - **Metadata stripping.** Images are re-encoded via canvas to drop EXIF/GPS.
 - **Ephemeral by default.** Pick 1 hour / 1 day / 1 week, or burn-after-reading.
   Expired files are cleaned up automatically; nothing is kept longer than its TTL.
+- **Multi-file & folder uploads.** Select several files (or a whole folder) for
+  one shared link (`/g/<id>`); recipients can download files individually or
+  grab everything as a single `.zip`, built and streamed client-side.
+- **Paste/text mode.** Share a block of text the same way a file is shared —
+  same encryption, expiry, and password options, no file required.
+- **Resumable uploads.** A dropped connection resumes from the last
+  acknowledged chunk instead of restarting the whole upload.
+- **Sender-side deletion.** A one-time delete link/token, shown once at
+  upload, lets you revoke a share early — no admin access needed.
+- **QR code.** Every share link gets a QR code for easy phone-to-phone
+  handoff.
+- **Named invite tokens.** Issue and revoke per-friend upload tokens from the
+  admin panel, independent of a shared static token.
 
 ## Stack
 
@@ -38,7 +51,7 @@ python server.py            # dev server on http://127.0.0.1:5000
 For production, run under gunicorn behind a TLS-terminating reverse proxy:
 
 ```sh
-gunicorn --workers 1 --bind 127.0.0.1:8000 --timeout 3600 server:app
+gunicorn --workers 2 --worker-class gthread --threads 4 --bind 127.0.0.1:8000 --timeout 3600 server:app
 ```
 
 Example `nginx`, `Caddy`, and `systemd` configs are in [`deploy/`](deploy/). Set
@@ -63,6 +76,7 @@ All settings are environment variables (loaded from `.env`); see
 | --- | --- |
 | `STORAGE_DIR` | Where the database and uploads live (default `data`). |
 | `MAX_SIZE_BYTES` | Per-file size cap (default 2 GB). |
+| `MAX_PASTE_SIZE` | Cap on a pasted text share (default 5 MB). |
 | `MIN_FREE_DISK_BYTES` | Stop accepting uploads below this much free space (default 1 GB). |
 | `TRUSTED_PROXY_COUNT` | Trusted reverse-proxy hops. Set to `1` behind nginx/Caddy. |
 | `ABUSE_CONTACT` | Address shown on the `/terms` page. |
@@ -70,6 +84,7 @@ All settings are environment variables (loaded from `.env`); see
 | `UPLOAD_IP_ALLOWLIST` | Comma-separated IPs/CIDRs allowed to upload. |
 | `UPLOAD_TOKEN_ROTATION` | Rotate the upload token every N seconds (0 = off). |
 | `ADMIN_TOKEN` | Secret for the admin panel and token API. |
+| `EXPOSE_DOWNLOAD_COUNT` | Show each file's download count on its download page (default off). |
 
 ## Upload gating
 
@@ -82,13 +97,18 @@ Downloads are never gated, since the link itself is the decryption key.
 - **Rotating tokens** — set `UPLOAD_TOKEN_ROTATION` to mint a fresh token every N
   seconds; a leaked token stops working within 2×N. Fetch the current one from
   the admin panel or `GET /api/admin/token`.
+- **Named invite tokens** — create individually-revocable tokens per person
+  from the admin panel, without a shared `UPLOAD_TOKEN`. Creating one turns
+  gating on for the whole deployment; revoking your last invite doesn't
+  silently reopen uploads.
 
 ## Admin panel
 
 `/admin`, unlocked with `ADMIN_TOKEN`. Shows an overview (uptime, storage, disk
-usage, counts), the current upload token (reveal / rotate), the list of stored
-files (metadata only — never plaintext), and the abuse-report queue. From here
-you can pause, restore, or delete any file.
+usage, counts), the current upload token (reveal / rotate), named invite
+tokens (create / revoke), the list of stored files (metadata only — never
+plaintext), and the abuse-report queue. From here you can pause, restore, or
+delete any file.
 
 ## Abuse handling
 
@@ -114,7 +134,7 @@ the next start.
 
 - Everything sensitive is encrypted client-side; the server is zero-knowledge by
   design. It cannot read, search, or recover file contents.
-- Strict CSP (no inline scripts/styles), `COOP`/`COEP`/`CORP`, `nosniff`,
+- Strict CSP (no inline scripts/styles), `COOP`/`CORP`, `nosniff`,
   `X-Frame-Options: DENY`, and HSTS when served over TLS.
 - File IDs are validated against a strict pattern and paths are contained to the
   upload directory, so IDs can't be used for traversal.

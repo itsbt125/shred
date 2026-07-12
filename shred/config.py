@@ -30,17 +30,10 @@ DB_PATH = DATA_DIR / "shred.db"
 
 MAX_FILE_SIZE = _env_int("MAX_SIZE_BYTES", 2 * 1024**3)
 MAX_CIPHERTEXT_SIZE = MAX_FILE_SIZE + 1024**2
+MAX_PASTE_SIZE = _env_int("MAX_PASTE_SIZE", 5 * 1024**2)
 
-# Uploads are chunked client-side (~1MiB ciphertext per request), so no
-# single request needs anywhere near MAX_CIPHERTEXT_SIZE — that cap only
-# applies to the cumulative bytes across a whole upload session, tracked
-# server-side in pending_uploads. This is the actual per-request body
-# size Flask/Werkzeug enforces (app.config["MAX_CONTENT_LENGTH"]) before
-# any route handler runs. Left at the old ~2GB ceiling, every endpoint —
-# including /api/upload/chunk, which has no per-request rate limit by
-# design — would accept multi-gigabyte request bodies before rejecting
-# anything, letting a single connection tie up a worker parsing/spooling
-# gigabytes for no legitimate reason.
+# Per-request body cap enforced by Flask/Werkzeug (MAX_CONTENT_LENGTH), distinct from
+# MAX_CIPHERTEXT_SIZE which caps cumulative bytes across a whole chunked upload session.
 MAX_UPLOAD_CHUNK_BYTES = _env_int("MAX_UPLOAD_CHUNK_BYTES", 2 * 1024**2)
 CLEANUP_INTERVAL = _env_int("CLEANUP_INTERVAL", 300)
 ID_PATTERN = re.compile(r'^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$')
@@ -52,14 +45,9 @@ RATE_WINDOW = _env_int("RATE_WINDOW", 60)
 
 MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 1024**3)
 
-# How long a chunked upload session can sit incomplete before the cleanup
-# thread reaps its partial file and DB row. Generous enough for a large
-# file on a slow connection, bounded so abandoned sessions don't pile up.
 PENDING_UPLOAD_TTL = _env_int("PENDING_UPLOAD_TTL", 3600)
 
-# Abuse reports are kept for moderation history but pruned eventually so the
-# table can't grow without bound (every report — including ones for
-# already-gone files — inserts a row). Default 90 days; set 0 to keep forever.
+# 0 = keep forever.
 REPORTS_RETENTION_SECONDS = _env_int("REPORTS_RETENTION_SECONDS", 90 * 86400)
 
 TRUSTED_PROXY_COUNT = _env_int("TRUSTED_PROXY_COUNT", 0)
@@ -105,6 +93,8 @@ UPLOAD_TOKEN_ROTATION = _env_int("UPLOAD_TOKEN_ROTATION", 0)
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
 
+EXPOSE_DOWNLOAD_COUNT = os.environ.get("EXPOSE_DOWNLOAD_COUNT", "0").strip() == "1"
+
 
 def token_gating_enabled():
     return bool(UPLOAD_TOKEN) or UPLOAD_TOKEN_ROTATION > 0
@@ -142,10 +132,13 @@ def client_config():
 
     return {
         "max_file_size_bytes": MAX_FILE_SIZE,
+        "max_paste_size_bytes": MAX_PASTE_SIZE,
         "max_file_size_display": format_bytes(MAX_FILE_SIZE),
+        "max_paste_size_display": format_bytes(MAX_PASTE_SIZE),
         "max_expiry_seconds": MAX_EXPIRY_SECONDS,
         "max_downloads_cap": MAX_DOWNLOADS_CAP,
         "expiry_options": opts,
         "upload_rate_per_minute": UPLOAD_RATE_LIMIT,
         "download_rate_per_minute": DOWNLOAD_RATE_LIMIT,
+        "expose_download_count": EXPOSE_DOWNLOAD_COUNT,
     }

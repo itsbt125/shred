@@ -40,13 +40,7 @@ def _add_security_headers(response):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    # NOTE: deliberately NOT setting Cross-Origin-Embedder-Policy: require-corp.
-    # shred doesn't use SharedArrayBuffer or anything needing cross-origin
-    # isolation, and require-corp gates navigations/downloads in ways that
-    # broke the service-worker streaming download in Firefox. COOP (window
-    # isolation) and CORP (this origin's resources can't be embedded cross-
-    # origin) give the protection that's actually relevant here without that
-    # cost.
+    # Deliberately no COEP: require-corp — it broke the service-worker streaming download in Firefox.
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     if request.is_secure:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -81,9 +75,6 @@ def create_app(bootstrap=True):
         template_folder=str(config.TEMPLATES_DIR),
         static_folder=str(config.STATIC_DIR),
     )
-    # Per-request cap, not per-upload-session — uploads are chunked, so no
-    # single request needs to be anywhere near the full file size. See the
-    # comment on MAX_UPLOAD_CHUNK_BYTES for why this used to be much larger.
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_CHUNK_BYTES
 
     logging.getLogger("shred").setLevel(logging.ERROR)
@@ -95,16 +86,7 @@ def create_app(bootstrap=True):
             x_proto=config.TRUSTED_PROXY_COUNT,
         )
     else:
-        # Loud warning: behind the documented nginx reverse proxy without
-        # this set, request.remote_addr is the proxy's IP (e.g. 127.0.0.1)
-        # for *every* client — so all users collapse into one per-IP rate-
-        # limit bucket and any IP allowlist compares against the proxy, not
-        # the real client. Only correct to leave at 0 if the app is directly
-        # internet-facing with no proxy in front.
-        #
-        # Printed rather than logged on purpose: the "shred" logger is pinned
-        # to ERROR above, which would swallow a warning-level record, and this
-        # is a one-shot startup notice (same approach as ensure_admin_token).
+        # print(), not logging: the "shred" logger is pinned to ERROR above and would swallow this.
         print(
             "[shred] WARNING TRUSTED_PROXY_COUNT=0: using the direct peer as the "
             "client IP. If a reverse proxy sits in front of shred, set "

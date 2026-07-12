@@ -1,3 +1,4 @@
+import secrets
 import shutil
 import time
 
@@ -6,7 +7,7 @@ from flask import Blueprint, jsonify, request
 from shred import config
 from shred.counters import get_counters
 from shred.db import get_db
-from shred.security import get_current_rotating_token, require_admin
+from shred.security import get_current_rotating_token, hash_token, require_admin, token_gating_effective
 from shred.storage import remove_blob, valid_id
 
 bp = Blueprint("admin", __name__)
@@ -67,7 +68,7 @@ def api_admin_overview():
         "reports": report_count,
         "disk": disk,
         "gating": {
-            "token_required": config.token_gating_enabled(),
+            "token_required": token_gating_effective(),
             "static_token": bool(config.UPLOAD_TOKEN),
             "ip_restricted": bool(config.UPLOAD_IP_ALLOWLIST),
             "rotation": rotation,
@@ -257,9 +258,58 @@ def api_status():
             "downloads_per_minute": config.DOWNLOAD_RATE_LIMIT,
         },
         "uploads": {
-            "gated": config.upload_gating_enabled(),
-            "token_required": config.token_gating_enabled(),
+            "gated": token_gating_effective() or bool(config.UPLOAD_IP_ALLOWLIST),
+            "token_required": token_gating_effective(),
             "ip_restricted": bool(config.UPLOAD_IP_ALLOWLIST),
             "rotation": rotation,
         },
     })
+
+
+@bp.route("/api/admin/invites")
+def api_admin_list_invites():
+    guard = require_admin()
+    if guard:
+        return guard
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, name, created, revoked, last_used FROM invite_tokens ORDER BY created DESC"
+    ).fetchall()
+    return jsonify({"invites": [{
+        "id": r["id"], "name": r["name"], "created": r["created"],
+        "revoked": bool(r["revoked"]), "last_used": r["last_used"],
+    } for r in rows]})
+
+
+@bp.route("/api/admin/invites", methods=["POST"])
+def api_admin_create_invite():
+    guard = require_admin()
+    if guard:
+        return guard
+    name = (request.form.get("name") or "").strip()[:100]
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    raw_token = secrets.token_urlsafe(24)
+    db = get_db()
+    db.execute(
+        "INSERT INTO invite_tokens (name, token_hash, created, revoked) VALUES (?, ?, ?, 0)",
+        (name, hash_token(raw_token), int(time.time())),
+    )
+    db.commit()
+    # Only the hash is persisted — this response is the only chance to hand out the raw token.
+    return jsonify({"name": name, "token": raw_token})
+
+
+@bp.route("/api/admin/invites/<int:invite_id>/revoke", methods=["POST"])
+def api_admin_revoke_invite(invite_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    db = get_db()
+    row = db.execute("SELECT id FROM invite_tokens WHERE id = ?", (invite_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    db.execute("UPDATE invite_tokens SET revoked = 1 WHERE id = ?", (invite_id,))
+    db.commit()
+    return jsonify({"status": "revoked"})

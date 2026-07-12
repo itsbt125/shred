@@ -7,14 +7,11 @@
   var TOKEN_KEY = "shred_admin_token";
   var token = null;
 
-  // --- elements ---
   var loginEl = document.getElementById("admin-login");
   var dashEl = document.getElementById("admin-dashboard");
   var tokenInput = document.getElementById("admin-token-input");
   var loginBtn = document.getElementById("admin-login-btn");
   var loginError = document.getElementById("admin-login-error");
-
-  // --- helpers ---
 
   function adminFetch(path, opts) {
     opts = opts || {};
@@ -54,7 +51,6 @@
     return "in " + Math.floor(rem / 86400) + "d";
   }
 
-  // Build a stat card via DOM (no innerHTML with dynamic values).
   function statCard(value, label) {
     var card = document.createElement("div");
     card.className = "stat-card";
@@ -68,8 +64,6 @@
     card.appendChild(l);
     return card;
   }
-
-  // --- rendering ---
 
   function renderOverview(d) {
     var grid = document.getElementById("admin-overview");
@@ -92,7 +86,6 @@
     if (d.gating.ip_restricted) access.push("ip");
     grid.appendChild(statCard(access.length ? access.join(" + ") : "open", "upload access"));
 
-    // token section only relevant when rotation is enabled
     var rotation = d.gating.rotation;
     var tokenH = document.getElementById("token-section-h");
     var tokenBox = document.getElementById("admin-token-box");
@@ -108,8 +101,6 @@
     }
   }
 
-  // offset is how many rows have been loaded so far (also the next page's
-  // offset param); total comes from the server's COUNT(*) each response.
   var filesState = { offset: 0, total: 0 };
   var reportsState = { offset: 0, total: 0 };
 
@@ -193,7 +184,6 @@
     });
   }
 
-  // action: "delete" (DELETE), or "suspend" / "restore" (POST).
   function fileAction(fileId, action) {
     var path = "/api/admin/files/" + encodeURIComponent(fileId);
     var method = "DELETE";
@@ -202,7 +192,6 @@
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
   }
 
-  // Build a small action button that runs a file action then refreshes.
   function actionButton(label, fileId, action, confirmMsg) {
     var b = document.createElement("button");
     b.className = "link-danger";
@@ -220,8 +209,6 @@
     });
     return b;
   }
-
-  // --- token actions ---
 
   function initTokenActions() {
     var valueEl = document.getElementById("admin-token-value");
@@ -285,7 +272,103 @@
     });
   }
 
-  // --- load / auth ---
+  function renderInvites(list) {
+    var body = document.getElementById("invites-body");
+    var empty = document.getElementById("invites-empty");
+    body.textContent = "";
+    document.getElementById("invites-count").textContent = list.length ? "(" + list.length + ")" : "";
+    empty.hidden = list.length > 0;
+    var now = Math.floor(Date.now() / 1000);
+
+    list.forEach(function (inv) {
+      var tr = document.createElement("tr");
+      if (inv.revoked) tr.className = "row-suspended";
+      appendCells(tr, [
+        inv.name,
+        fmtAgo(inv.created, now),
+        inv.last_used ? fmtAgo(inv.last_used, now) : "never",
+      ]);
+
+      var statusTd = document.createElement("td");
+      var badge = document.createElement("span");
+      badge.className = inv.revoked ? "badge badge-suspended" : "badge badge-active";
+      badge.textContent = inv.revoked ? "revoked" : "active";
+      statusTd.appendChild(badge);
+      tr.appendChild(statusTd);
+
+      var actionTd = document.createElement("td");
+      actionTd.className = "action-cell";
+      if (!inv.revoked) {
+        var b = document.createElement("button");
+        b.className = "link-danger";
+        b.textContent = "revoke";
+        b.addEventListener("click", function () {
+          if (!window.confirm("Revoke invite \"" + inv.name + "\"? It will stop working immediately.")) return;
+          b.disabled = true;
+          adminFetch("/api/admin/invites/" + inv.id + "/revoke", { method: "POST" })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+              if (res.ok) refreshInvites();
+              else { b.disabled = false; window.alert("error: " + (res.j.error || "revoke failed")); }
+            })
+            .catch(function () { b.disabled = false; window.alert("network error"); });
+        });
+        actionTd.appendChild(b);
+      }
+      tr.appendChild(actionTd);
+      body.appendChild(tr);
+    });
+  }
+
+  function refreshInvites() {
+    return adminFetch("/api/admin/invites")
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderInvites(d.invites || []); });
+  }
+
+  function initInviteActions() {
+    var nameInput = document.getElementById("invite-name-input");
+    var createBtn = document.getElementById("invite-create-btn");
+    var newBox = document.getElementById("invite-new-box");
+    var newValue = document.getElementById("invite-new-value");
+    var newCopy = document.getElementById("invite-new-copy");
+
+    createBtn.addEventListener("click", function () {
+      var name = nameInput.value.trim();
+      if (!name) return;
+      createBtn.disabled = true;
+      var form = new FormData();
+      form.append("name", name);
+      adminFetch("/api/admin/invites", { method: "POST", body: form })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          createBtn.disabled = false;
+          if (res.ok) {
+            nameInput.value = "";
+            newValue.textContent = res.j.token;
+            newValue.classList.add("revealed");
+            newBox.hidden = false;
+            refreshInvites();
+          } else {
+            window.alert("error: " + (res.j.error || "create failed"));
+          }
+        })
+        .catch(function () { createBtn.disabled = false; window.alert("network error"); });
+    });
+
+    nameInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") createBtn.click();
+    });
+
+    newCopy.addEventListener("click", function () {
+      var text = newValue.textContent;
+      var done = function () {
+        newCopy.textContent = "copied";
+        setTimeout(function () { newCopy.textContent = "copy"; }, 1500);
+      };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+    });
+  }
 
   function refresh() {
     filesState = { offset: 0, total: 0 };
@@ -294,6 +377,7 @@
       adminFetch("/api/admin/overview").then(function (r) { return r.json(); }),
       adminFetch("/api/admin/files").then(function (r) { return r.json(); }),
       adminFetch("/api/admin/reports").then(function (r) { return r.json(); }),
+      refreshInvites(),
     ]).then(function (results) {
       document.getElementById("admin-refresh-error").textContent = "";
       var now = results[1].now || Math.floor(Date.now() / 1000);
@@ -384,8 +468,8 @@
   });
 
   initTokenActions();
+  initInviteActions();
 
-  // Auto-login if a token is already in this session.
   var saved = null;
   try { saved = sessionStorage.getItem(TOKEN_KEY); } catch (e) {}
   if (saved) attemptLogin(saved);

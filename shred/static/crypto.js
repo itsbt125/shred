@@ -1,14 +1,12 @@
-// crypto.js — Web Crypto helpers for shred_
-// Zero-knowledge: all encryption/decryption happens client-side.
-// The server never sees plaintext, keys, or passwords.
+// crypto.js — Web Crypto helpers for shred_. Zero-knowledge: all
+// encryption/decryption happens client-side; the server never sees
+// plaintext, keys, or passwords.
 
 const CHUNK_SIZE = 1024 * 1024;       // 1 MiB
 const PBKDF2_ITERATIONS = 600000;
 const IV_LENGTH = 12;                 // 96-bit GCM nonce
 const SALT_LENGTH = 16;
 const TAG_LENGTH = 16;                // AES-GCM auth tag
-
-// --- base64url helpers (for URL fragment key) ---
 
 function bytesToBase64url(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -30,8 +28,6 @@ function base64urlToBytes(str) {
   return bytes;
 }
 
-// --- standard base64 helpers (for API metadata) ---
-
 function bytesToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -50,15 +46,11 @@ function base64ToBytes(b64) {
   return bytes;
 }
 
-// --- random ---
-
 function randomBytes(length) {
   const arr = new Uint8Array(length);
   crypto.getRandomValues(arr);
   return arr;
 }
-
-// --- key generation / import / export ---
 
 function generateContentKey() {
   return crypto.subtle.generateKey(
@@ -84,8 +76,6 @@ async function importKey(b64url) {
   );
 }
 
-// --- PBKDF2 key derivation (password -> KEK) ---
-
 async function deriveKEK(password, salt) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
@@ -104,8 +94,6 @@ async function deriveKEK(password, salt) {
   );
 }
 
-// --- key wrapping (password mode) ---
-
 async function wrapContentKey(kek, contentKey) {
   return crypto.subtle.wrapKey("raw", contentKey, kek, "AES-KW");
 }
@@ -122,10 +110,7 @@ async function unwrapContentKey(kek, wrappedKeyBytes) {
   );
 }
 
-// --- chunked AES-GCM ---
-
-// IV per chunk: first 8 bytes of base_iv + 4-byte big-endian counter.
-// Guarantees IV uniqueness under the same key for up to 2^32 chunks (4 TB).
+// IV per chunk = base_iv[0:8] + 4-byte big-endian counter, unique for up to 2^32 chunks.
 function chunkIV(baseIv, index) {
   const iv = new Uint8Array(IV_LENGTH);
   iv.set(baseIv.subarray(0, 8));
@@ -143,30 +128,78 @@ async function readJsonError(response, fallback) {
   }
 }
 
-// Encrypts and uploads one ~1MiB chunk at a time — encrypt, POST, release,
-// repeat — instead of building the whole ciphertext in memory before a
-// single request. This is what actually keeps client memory flat for a
-// multi-GB file; without it, removing the double-buffer in the old
-// encryptFile() only halved a number that was still O(file size).
-//
-// init is a single request carrying the file's metadata (rate-limited and
-// upload-token-gated server-side, same as the old one-shot endpoint).
-// Each chunk after that is authorized purely by possession of the
-// (unguessable) upload_id returned from init.
-async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onProgress) {
-  const initForm = new FormData();
-  for (const [k, v] of Object.entries(metadata)) initForm.append(k, v);
-  if (uploadToken) initForm.append("upload_token", uploadToken);
+const CHUNK_RETRY_ATTEMPTS = 5;
+const CHUNK_RETRY_BACKOFF_MS = [500, 1000, 2000, 4000];
 
-  const initHeaders = uploadToken ? { "X-Upload-Token": uploadToken } : {};
-  const initResp = await fetch("/api/upload/init", { method: "POST", body: initForm, headers: initHeaders });
-  if (!initResp.ok) {
-    throw new Error(await readJsonError(initResp, "upload init failed (" + initResp.status + ")"));
+// Retries transient failures (network error, 429, 5xx) with backoff; other statuses throw immediately.
+async function uploadChunkWithRetry(uploadId, chunkIndex, encryptedBuffer) {
+  let lastError;
+  for (let attempt = 0; attempt < CHUNK_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const chunkForm = new FormData();
+      chunkForm.append("upload_id", uploadId);
+      chunkForm.append("chunk_index", String(chunkIndex));
+      chunkForm.append("chunk", new Blob([encryptedBuffer]), "chunk.enc");
+
+      const chunkResp = await fetch("/api/upload/chunk", { method: "POST", body: chunkForm });
+      if (chunkResp.ok) return;
+
+      const msg = await readJsonError(chunkResp, "chunk upload failed (" + chunkResp.status + ")");
+      if (chunkResp.status !== 429 && chunkResp.status < 500) {
+        throw new Error(msg);
+      }
+      lastError = new Error(msg);
+    } catch (e) {
+      if (e instanceof TypeError) {
+        lastError = e; // TypeError from fetch() means a network-level failure — treat as transient.
+      } else {
+        throw e;
+      }
+    }
+    if (attempt < CHUNK_RETRY_ATTEMPTS - 1) {
+      await new Promise(function (resolve) {
+        setTimeout(resolve, CHUNK_RETRY_BACKOFF_MS[attempt] || 4000);
+      });
+    }
   }
-  const { upload_id } = await initResp.json();
+  throw lastError;
+}
+
+// Encrypts and uploads ~1MiB at a time (encrypt, POST, release) to keep client memory flat for multi-GB files.
+// resumeUploadId, if given, asks the server which chunk to resume from instead of re-sending already-received bytes.
+async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onProgress, resumeUploadId) {
+  let upload_id = null;
+  let startChunkIndex = 0;
+
+  if (resumeUploadId) {
+    try {
+      const statusResp = await fetch("/api/upload/status/" + encodeURIComponent(resumeUploadId));
+      if (statusResp.ok) {
+        const statusBody = await statusResp.json();
+        upload_id = resumeUploadId;
+        startChunkIndex = statusBody.next_chunk_index || 0;
+      }
+    } catch (e) {
+      // fall through to a fresh init
+    }
+  }
+
+  if (!upload_id) {
+    const initForm = new FormData();
+    for (const [k, v] of Object.entries(metadata)) initForm.append(k, v);
+    if (uploadToken) initForm.append("upload_token", uploadToken);
+
+    const initHeaders = uploadToken ? { "X-Upload-Token": uploadToken } : {};
+    const initResp = await fetch("/api/upload/init", { method: "POST", body: initForm, headers: initHeaders });
+    if (!initResp.ok) {
+      throw new Error(await readJsonError(initResp, "upload init failed (" + initResp.status + ")"));
+    }
+    upload_id = (await initResp.json()).upload_id;
+    startChunkIndex = 0;
+  }
 
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
-  for (let i = 0; i < totalChunks; i++) {
+  for (let i = startChunkIndex; i < totalChunks; i++) {
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, file.size);
     const chunkBuffer = await file.slice(start, end).arrayBuffer();
@@ -174,14 +207,12 @@ async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onPro
     const iv = chunkIV(baseIv, i);
     const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, chunkBuffer);
 
-    const chunkForm = new FormData();
-    chunkForm.append("upload_id", upload_id);
-    chunkForm.append("chunk_index", String(i));
-    chunkForm.append("chunk", new Blob([encrypted]), "chunk.enc");
-
-    const chunkResp = await fetch("/api/upload/chunk", { method: "POST", body: chunkForm });
-    if (!chunkResp.ok) {
-      throw new Error(await readJsonError(chunkResp, "chunk upload failed (" + chunkResp.status + ")"));
+    try {
+      await uploadChunkWithRetry(upload_id, i, encrypted);
+    } catch (e) {
+      const err = new Error(e.message);
+      err.uploadId = upload_id;
+      throw err;
     }
 
     if (onProgress) onProgress((i + 1) / totalChunks);
@@ -189,21 +220,24 @@ async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onPro
 
   const finishForm = new FormData();
   finishForm.append("upload_id", upload_id);
-  const finishResp = await fetch("/api/upload/finish", { method: "POST", body: finishForm });
+  let finishResp;
+  try {
+    finishResp = await fetch("/api/upload/finish", { method: "POST", body: finishForm });
+  } catch (e) {
+    const err = new Error("upload finish failed: " + e.message);
+    err.uploadId = upload_id;
+    throw err;
+  }
   if (!finishResp.ok) {
-    throw new Error(await readJsonError(finishResp, "upload finish failed (" + finishResp.status + ")"));
+    const err = new Error(await readJsonError(finishResp, "upload finish failed (" + finishResp.status + ")"));
+    err.uploadId = upload_id;
+    throw err;
   }
   return finishResp.json();
 }
 
-// --- streaming download + decrypt ---
-//
-// The network response arrives as arbitrary-sized chunks that don't line up
-// with our logical (CHUNK_SIZE + TAG_LENGTH) ciphertext chunk boundaries, so
-// we can't know a chunk is complete (let alone that it's the *last* one,
-// which may be shorter) until we've either buffered a full chunk's worth or
-// hit the end of the stream. Buffering just enough to stay one chunk ahead
-// keeps memory flat at O(chunk size) regardless of file size.
+// Buffers one ciphertext chunk ahead since the network stream doesn't align with
+// CHUNK_SIZE boundaries and we can't tell a chunk is the (possibly short) last one until more data arrives or the stream ends.
 function createDecryptTransform(key, baseIv, onBytesDecrypted) {
   const fullChunkCtSize = CHUNK_SIZE + TAG_LENGTH;
   let buffer = new Uint8Array(0);
@@ -227,8 +261,6 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
     async transform(chunk, controller) {
       append(chunk);
       bytesIn += chunk.length;
-      // Only decrypt once we know more data follows, i.e. the buffered
-      // chunk can't be the (possibly short) final one.
       while (buffer.length > fullChunkCtSize) {
         const ctSlice = buffer.subarray(0, fullChunkCtSize);
         const plaintext = await decryptChunk(ctSlice);
@@ -249,8 +281,7 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
   });
 }
 
-// Registered once, early, from initViewPage — by the time the user actually
-// clicks download the SW has almost always finished activating.
+// Registered early from initViewPage so it's usually already active by the time the user clicks download.
 let _downloadSwRegistration = null;
 
 function registerDownloadServiceWorker() {
@@ -260,18 +291,8 @@ function registerDownloadServiceWorker() {
     .catch(function () {});
 }
 
-// Note: this deliberately does NOT use navigator.serviceWorker.controller.
-// A page only becomes "controlled" by a service worker if the page's own
-// URL falls within that worker's scope — our view pages live at /f/<id>,
-// outside the /static/ scope the download worker registers under, so
-// `controller` would be null forever regardless of activation state or
-// how long you wait. Messaging the registration's active worker directly
-// works from any page: it doesn't require the sender to be controlled,
-// only the *download link itself* (/static/__shred_stream__/<token>) to
-// fall within the worker's scope, which it does. That in-scope-URL match
-// is also what lets the worker intercept the anchor-click download at
-// all, independent of this page's controller status — the mechanism
-// StreamSaver.js-style techniques rely on.
+// Deliberately not navigator.serviceWorker.controller: /f/<id> pages are outside the
+// worker's /static/ scope so controller is always null; messaging reg.active works regardless.
 async function getActiveDownloadServiceWorker() {
   if (!("serviceWorker" in navigator) || !window.isSecureContext) return null;
   try {
@@ -301,28 +322,12 @@ async function getActiveDownloadServiceWorker() {
   }
 }
 
-// True streaming save via a same-origin service worker fetch intercept:
-// the browser's own download writer consumes the piped stream, so bytes
-// never have to sit fully in page memory. Works in Firefox/Safari too,
-// unlike the File System Access API. See static/download-sw.js.
-//
-// Deliberately fire-and-forget after the click, same as the old anchor+blob
-// path — there's no reliable way to observe when the browser finishes
-// writing to disk. A bad key or tampered ciphertext surfaces as a failed
-// download in the browser's own UI, not here (password-protected files
-// already validate the key via unwrap before a download is even attempted).
-//
-// An earlier version of this function used readableStream.tee() to drain a
-// second branch just to catch that case — but tee() enqueues into both
-// branches whenever either is pulled, not gated by the slower branch's
-// buffer, so a drain loop running faster than the SW consumes the stream
-// would silently reintroduce full-file buffering. Not worth it for
-// marginal error visibility; removed.
+// Streams via a service worker fetch intercept (see download-sw.js) so bytes never sit
+// fully in page memory; works in Firefox/Safari unlike the File System Access API.
+// Fire-and-forget: there's no way to observe when the browser finishes writing to disk.
 function supportsTransferableStreams() {
-  // Feature-detect transferable ReadableStreams. Older browsers throw
-  // "DataCloneError" when a stream is listed in the transfer array; detecting
-  // up front lets the caller pick the blob fallback instead of half-starting
-  // an SW download that silently produces nothing.
+  // Older browsers throw DataCloneError transferring a ReadableStream; feature-detect
+  // so the caller can pick the blob fallback instead of a silently-failing SW download.
   try {
     const rs = new ReadableStream();
     const mc = new MessageChannel();
@@ -338,34 +343,18 @@ function supportsTransferableStreams() {
 async function saveViaServiceWorker(worker, readableStream, filename, plainSize) {
   const token = crypto.randomUUID();
 
-  // Transfer is atomic: if the browser can't transfer a ReadableStream this
-  // throws before anything is sent and readableStream is left untouched, so
-  // the caller can fall back to a different save strategy with the same
-  // stream. (supportsTransferableStreams is checked first by the caller, but
-  // keep the try semantics intact.)
   worker.postMessage(
     { type: "register-stream", token: token, filename: filename, size: plainSize, stream: readableStream },
     [readableStream]
   );
 
-  // Trigger the download by navigating a hidden iframe to the SW-scoped URL,
-  // NOT a top-level `<a download>` click. A service worker reliably
-  // intercepts an iframe's in-scope navigation across browsers — this is the
-  // mechanism StreamSaver.js uses — whereas a top-level download navigation
-  // is the least reliably intercepted case, particularly in Firefox, which
-  // is exactly where the old anchor approach produced "network activity but
-  // no saved file". The iframe also means a failure can't blank out or
-  // navigate away the page the user is looking at. The filename now rides on
-  // the SW response's Content-Disposition, so the iframe needs no download
-  // attribute.
+  // A hidden iframe navigation is reliably intercepted by the SW across browsers
+  // (notably Firefox); a top-level <a download> click is not.
   const iframe = document.createElement("iframe");
   iframe.setAttribute("hidden", "");
   iframe.style.display = "none";
   iframe.src = "/static/__shred_stream__/" + token;
   document.body.appendChild(iframe);
-  // Once the browser commits the navigation to a download it continues in the
-  // download manager independent of the iframe, so cleaning up after a delay
-  // is safe and avoids leaking an element per download.
   setTimeout(function () {
     try { document.body.removeChild(iframe); } catch (e) {}
   }, 120000);
@@ -390,26 +379,9 @@ async function saveViaBlob(readableStream, filename) {
   setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
 }
 
-// Fetches ciphertext, decrypts it as bytes arrive (never buffering the
-// whole file), and saves it.
-//
-// Priority order is deliberate, not "best API first": File System Access
-// (Chromium/Edge) is a mature, directly-observable API — pipeTo() either
-// writes the file or throws, so failures are visible. The service worker
-// path is the only way to get true streaming saves in Firefox/Safari
-// (confirmed working end-to-end, byte-for-byte, via a real test), but
-// under browser automation Chrome was observed to silently cancel SW-
-// triggered downloads after handoff, with no error surfaced back to the
-// page — a fire-and-forget API can't detect that. Since it's unclear
-// whether that's an automation-only artifact or a real Chrome behavior,
-// Chromium is kept on the API that's been verifiable, and the SW path is
-// reserved for browsers that have no other route to a flat-memory save.
-// Returns a short string naming the save path actually taken —
-// "filesystem" | "service-worker" | "blob" | "aborted" — so the caller can
-// show an honest status (e.g. the blob path buffers the whole file in memory
-// and the user should be told, and the SW/FS paths save without a further
-// prompt in some browsers). Throws on real errors (network, decrypt, expiry).
-async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onProgress) {
+// Fetches ciphertext, returns a ReadableStream of plaintext bytes (decrypted as they arrive,
+// never buffering the whole file). Throws "expired"/"suspended" on 410/451.
+async function openDecryptedStream(url, key, baseIv, onProgress) {
   const response = await fetch(url);
   if (response.status === 410) throw new Error("expired");
   if (response.status === 451) throw new Error("suspended");
@@ -419,10 +391,14 @@ async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onPr
   const transform = createDecryptTransform(key, baseIv, function (bytesIn) {
     if (onProgress && ctLength) onProgress(Math.min(bytesIn / ctLength, 1));
   });
-  const decryptedStream = response.body.pipeThrough(transform);
+  return response.body.pipeThrough(transform);
+}
 
-  // 1. File System Access API (Chromium/Edge): mature, directly observable —
-  //    pipeTo() resolves on success or throws, so failures are visible.
+// Saves a plaintext ReadableStream to disk, picking the best available strategy.
+// Chromium stays on File System Access rather than the SW path: SW-triggered downloads were
+// observed to silently cancel under Chrome automation with no error surfaced back to the page.
+// Returns "filesystem" | "service-worker" | "blob" | "aborted"; throws on real errors.
+async function saveStream(decryptedStream, filename, plainSize) {
   if ("showSaveFilePicker" in window) {
     let handle;
     try {
@@ -439,11 +415,6 @@ async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onPr
     return "filesystem";
   }
 
-  // 2. Service worker streaming save (Firefox/Safari and any browser without
-  //    the FS Access API). Only attempt it when the browser can actually
-  //    transfer the stream to the worker AND the worker is active — otherwise
-  //    we'd hand off to a path that silently produces nothing. Fall through
-  //    to the in-memory blob if either precondition fails.
   if (supportsTransferableStreams()) {
     const swWorker = await getActiveDownloadServiceWorker();
     if (swWorker) {
@@ -452,14 +423,97 @@ async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onPr
     }
   }
 
-  // 3. Last resort: buffer the whole decrypted file in memory as one Blob,
-  //    then save. Works everywhere but peak memory ~= file size, so the
-  //    caller warns the user for large files.
+  // Last resort: buffers the whole file in memory (peak memory ~= file size).
   await saveViaBlob(decryptedStream, filename);
   return "blob";
 }
 
-// --- filename encryption ---
+async function streamDownloadDecrypt(url, plainSize, key, baseIv, filename, onProgress) {
+  const decryptedStream = await openDecryptedStream(url, key, baseIv, onProgress);
+  return saveStream(decryptedStream, filename, plainSize);
+}
+
+// Streams each file's decrypted bytes into a single ZIP via client-zip. Files are opened
+// lazily (one fetch at a time) as the zip encoder pulls them, so we never exceed the browser's
+// per-host connection cap and never buffer a whole file. Any per-file failure aborts the whole zip.
+async function downloadGroupAsZip(files, filenames, contentKey, zipName, onProgress) {
+  let totalSize = 0;
+  for (const f of files) totalSize += (f.size || 0);
+
+  const doneBytes = new Array(files.length).fill(0);
+  function reportProgress() {
+    if (!onProgress || !totalSize) return;
+    let done = 0;
+    for (const b of doneBytes) done += b;
+    onProgress(Math.min(done / totalSize, 1));
+  }
+
+  const usedNames = Object.create(null);
+  function uniqueName(name, index) {
+    let n = name || ("file-" + (index + 1));
+    if (usedNames[n]) {
+      const dot = n.lastIndexOf(".");
+      const base = dot > 0 ? n.slice(0, dot) : n;
+      const ext = dot > 0 ? n.slice(dot) : "";
+      n = base + "-" + (usedNames[name]++) + ext;
+    } else {
+      usedNames[n] = 1;
+    }
+    return n;
+  }
+
+  async function* entries() {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const idx = i;
+      let stream;
+      try {
+        stream = await openDecryptedStream(f.url, contentKey, f.iv, function (frac) {
+          doneBytes[idx] = frac * (f.size || 0);
+          reportProgress();
+        });
+      } catch (e) {
+        const err = new Error(e.message);
+        err.filename = filenames[i];
+        throw err;
+      }
+      yield { name: uniqueName(filenames[i], i), input: stream, size: f.size };
+    }
+  }
+
+  const zipResponse = downloadZip(entries());
+  return saveStream(zipResponse.body, zipName, totalSize);
+}
+
+// Like streamDownloadDecrypt but returns plaintext bytes in memory; fine for paste/text shares (small, from a <textarea>).
+async function streamDownloadDecryptToBytes(url, key, baseIv, onProgress) {
+  const response = await fetch(url);
+  if (response.status === 410) throw new Error("expired");
+  if (response.status === 451) throw new Error("suspended");
+  if (!response.ok) throw new Error("download failed (" + response.status + ")");
+
+  const ctLength = Number(response.headers.get("Content-Length")) || 0;
+  const transform = createDecryptTransform(key, baseIv, function (bytesIn) {
+    if (onProgress && ctLength) onProgress(Math.min(bytesIn / ctLength, 1));
+  });
+  const decryptedStream = response.body.pipeThrough(transform);
+  const reader = decryptedStream.getReader();
+  const chunks = [];
+  let totalLen = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    totalLen += value.length;
+  }
+  const combined = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) {
+    combined.set(c, offset);
+    offset += c.length;
+  }
+  return combined;
+}
 
 async function encryptFilename(filename, key) {
   const enc = new TextEncoder();
@@ -486,8 +540,6 @@ async function decryptFilename(encryptedFilenameBytes, key) {
   );
   return new TextDecoder().decode(decrypted);
 }
-
-// --- image metadata stripping (canvas re-encode) ---
 
 const STRIPPABLE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 

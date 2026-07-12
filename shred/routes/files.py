@@ -3,6 +3,7 @@ import errno
 import os
 import secrets
 import shutil
+import sqlite3
 import time
 
 from flask import Blueprint, Response, jsonify, request
@@ -11,7 +12,7 @@ from shred import config
 from shred.config import ip_allowed
 from shred.counters import record_download, record_upload
 from shred.db import get_db
-from shred.security import rate_limit, upload_token_valid
+from shred.security import hash_token, rate_limit, safe_compare, token_gating_effective, upload_token_valid
 from shred.storage import (
     generate_id,
     partial_storage_path,
@@ -28,10 +29,7 @@ bp = Blueprint("files", __name__)
 
 
 def _validate_upload_metadata(form):
-    """Shared validation for the metadata fields an upload declares up
-    front, at /api/upload/init. Returns (metadata_dict, None) or
-    (None, (error_response, status)).
-    """
+    """Returns (metadata_dict, None) or (None, (error_response, status))."""
     iv_b64 = form.get("iv")
     encrypted_filename_b64 = form.get("encrypted_filename")
     size_str = form.get("size")
@@ -58,9 +56,14 @@ def _validate_upload_metadata(form):
     except Exception:
         return None, ({"error": "invalid encrypted_filename"}, 400)
 
+    content_kind = form.get("content_kind", "file")
+    if content_kind not in ("file", "paste"):
+        return None, ({"error": "invalid content_kind"}, 400)
+
     try:
         size = int(size_str)
-        if size < 0 or size > config.MAX_FILE_SIZE:
+        size_cap = config.MAX_PASTE_SIZE if content_kind == "paste" else config.MAX_FILE_SIZE
+        if size < 0 or size > size_cap:
             return None, ({"error": "invalid size"}, 400)
     except Exception:
         return None, ({"error": "invalid size"}, 400)
@@ -100,6 +103,18 @@ def _validate_upload_metadata(form):
         except Exception:
             return None, ({"error": "invalid wrapped_key"}, 400)
 
+    group_id = form.get("group_id") or None
+    if group_id is not None and not valid_upload_id(group_id):
+        return None, ({"error": "invalid group_id"}, 400)
+
+    try:
+        group_index = int(form.get("group_index", "0"))
+        group_count = int(form.get("group_count", "1"))
+        if group_index < 0 or group_count < 1 or group_index >= group_count or group_count > 500:
+            return None, ({"error": "invalid group index/count"}, 400)
+    except Exception:
+        return None, ({"error": "invalid group index/count"}, 400)
+
     return {
         "iv": iv,
         "encrypted_filename": encrypted_filename,
@@ -109,22 +124,16 @@ def _validate_upload_metadata(form):
         "has_password": has_password,
         "salt": salt,
         "wrapped_key": wrapped_key,
+        "content_kind": content_kind,
+        "group_id": group_id,
+        "group_index": group_index,
+        "group_count": group_count,
     }, None
 
 
-# Uploads are chunked (encrypt one ~1MiB ciphertext chunk client-side, POST
-# it, release it, repeat) rather than one large multipart POST, for two
-# reasons: it keeps client memory flat regardless of file size, and it
-# avoids Werkzeug spooling an entire multi-GB request body to a temp file
-# before the view function ever runs. init is rate-limited and token-gated
-# like the old single-shot endpoint; chunk/finish are authorized purely by
-# possession of the unguessable upload_id (same bearer-token pattern the
-# content encryption key already uses in this app) and are deliberately
-# NOT rate-limited per-request — a 2GB upload is ~2000 chunks, which would
-# blow through any reasonable per-minute limit even for a single well-
-# behaved upload. Abuse is bounded instead by strict in-order chunk
-# indexing, a cumulative size cap, and reaping abandoned sessions in
-# cleanup.py.
+# chunk/finish are intentionally not rate-limited per-request (a large upload
+# is thousands of chunks); abuse is bounded by in-order indexing, size caps,
+# and reaping abandoned sessions in cleanup.py.
 @bp.route("/api/upload/init", methods=["POST"])
 def api_upload_init():
     ip = request.remote_addr or "unknown"
@@ -135,7 +144,7 @@ def api_upload_init():
     if not rate_limit("upload:" + ip, config.UPLOAD_RATE_LIMIT):
         return jsonify({"error": "rate limit exceeded"}), 429
 
-    if config.token_gating_enabled():
+    if token_gating_effective():
         provided = request.headers.get("X-Upload-Token") or request.form.get("upload_token", "")
         if not upload_token_valid(provided):
             return jsonify({"error": "a valid upload token is required"}), 403
@@ -163,11 +172,14 @@ def api_upload_init():
         db.execute(
             """INSERT INTO pending_uploads
                (upload_id, bytes_received, next_chunk_index, encrypted_filename, iv, size,
-                expiry, max_downloads, has_password, salt, wrapped_key, created)
-               VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                expiry, max_downloads, has_password, salt, wrapped_key, created,
+                content_kind, group_id, group_index, group_count)
+               VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (upload_id, metadata["encrypted_filename"], metadata["iv"], metadata["size"],
              metadata["expiry"], metadata["max_downloads"], metadata["has_password"],
-             metadata["salt"], metadata["wrapped_key"], int(time.time()))
+             metadata["salt"], metadata["wrapped_key"], int(time.time()),
+             metadata["content_kind"], metadata["group_id"], metadata["group_index"],
+             metadata["group_count"])
         )
         db.commit()
     except Exception:
@@ -205,12 +217,8 @@ def api_upload_chunk():
             db.execute("ROLLBACK")
             return jsonify({"error": "unexpected chunk index"}), 409
 
-        # bytes_received is the authoritative length of the good prefix of the
-        # partial file. If this chunk's append fails partway (size cap hit,
-        # ENOSPC) we roll back the DB — so we must also truncate the file back
-        # to that offset, or the on-disk length drifts past bytes_received and
-        # every later chunk lands at the wrong position, silently corrupting
-        # the upload.
+        # Must truncate the partial file back to bytes_received on any failed
+        # append, or its on-disk length drifts and later chunks land at the wrong offset.
         base_len = row["bytes_received"]
 
         def _truncate_back():
@@ -301,18 +309,29 @@ def api_upload_finish():
             pass
         return jsonify({"error": "storage failed"}), 500
 
+    delete_token = secrets.token_urlsafe(24)
+    delete_token_hash = hash_token(delete_token)
+
     try:
         db.execute(
             """INSERT INTO files
                (id, encrypted_filename, iv, size, expiry,
-                max_downloads, downloads, has_password, salt, wrapped_key, created)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+                max_downloads, downloads, has_password, salt, wrapped_key, created,
+                content_kind, group_id, group_index, group_count, delete_token_hash)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (file_id, row["encrypted_filename"], row["iv"], row["size"], row["expiry"],
              row["max_downloads"], row["has_password"], row["salt"], row["wrapped_key"],
-             int(time.time()))
+             int(time.time()), row["content_kind"], row["group_id"], row["group_index"],
+             row["group_count"], delete_token_hash)
         )
         db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (upload_id,))
         db.commit()
+    except sqlite3.IntegrityError:
+        try:
+            os.remove(final_path)
+        except OSError:
+            pass
+        return jsonify({"error": "group_id/group_index already in use"}), 409
     except Exception:
         try:
             os.remove(final_path)
@@ -321,7 +340,81 @@ def api_upload_finish():
         return jsonify({"error": "database failed"}), 500
 
     record_upload()
-    return jsonify({"id": file_id})
+    return jsonify({"id": file_id, "delete_token": delete_token})
+
+
+@bp.route("/api/upload/status/<upload_id>")
+def api_upload_status(upload_id):
+    if not valid_upload_id(upload_id):
+        return jsonify({"error": "invalid upload_id"}), 400
+    db = get_db()
+    row = db.execute(
+        "SELECT next_chunk_index, bytes_received FROM pending_uploads WHERE upload_id = ?", (upload_id,)
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "unknown or expired upload"}), 404
+    return jsonify({"next_chunk_index": row["next_chunk_index"], "bytes_received": row["bytes_received"]})
+
+
+@bp.route("/api/file/<file_id>", methods=["DELETE"])
+def api_delete_file(file_id):
+    if not valid_id(file_id):
+        return jsonify({"error": "not found"}), 404
+
+    ip = request.remote_addr or "unknown"
+    if not rate_limit("delete:" + ip, config.DOWNLOAD_RATE_LIMIT):
+        return jsonify({"error": "rate limit exceeded"}), 429
+
+    provided = request.headers.get("X-Delete-Token") or request.form.get("delete_token", "")
+    if not provided:
+        return jsonify({"error": "delete token required"}), 400
+
+    db = get_db()
+    row = db.execute("SELECT delete_token_hash FROM files WHERE id = ?", (file_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    if not row["delete_token_hash"] or not safe_compare(hash_token(provided), row["delete_token_hash"]):
+        return jsonify({"error": "invalid delete token"}), 403
+
+    remove_blob(file_id)
+    db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+    db.commit()
+    return jsonify({"status": "deleted"})
+
+
+def _check_file_availability(row, db):
+    """Returns None if the file row is currently downloadable, else (error_str, status)."""
+    if row["expiry"] < int(time.time()):
+        remove_blob(row["id"])
+        db.execute("DELETE FROM files WHERE id = ?", (row["id"],))
+        db.commit()
+        return ("expired", 410)
+    if row["suspended"]:
+        return ("suspended", 451)
+    return None
+
+
+def _file_meta_dict(row):
+    """Public metadata for one file row."""
+    meta = {
+        "id": row["id"],
+        "iv": base64.b64encode(row["iv"]).decode(),
+        "encrypted_filename": base64.b64encode(row["encrypted_filename"]).decode(),
+        "size": row["size"],
+        "expiry": row["expiry"],
+        "has_password": bool(row["has_password"]),
+        "salt": base64.b64encode(row["salt"]).decode() if row["salt"] else None,
+        "wrapped_key": base64.b64encode(row["wrapped_key"]).decode() if row["wrapped_key"] else None,
+        "max_downloads": row["max_downloads"],
+        "created": row["created"],
+        "content_kind": row["content_kind"],
+        "group_id": row["group_id"],
+        "group_index": row["group_index"],
+        "group_count": row["group_count"],
+    }
+    if config.EXPOSE_DOWNLOAD_COUNT:
+        meta["downloads"] = row["downloads"]
+    return meta
 
 
 @bp.route("/api/meta/<file_id>")
@@ -335,28 +428,40 @@ def api_meta(file_id):
     if not row:
         return jsonify({"error": "not found"}), 410
 
-    if row["expiry"] < int(time.time()):
-        remove_blob(file_id)
-        db.execute("DELETE FROM files WHERE id = ?", (file_id,))
-        db.commit()
+    unavailable = _check_file_availability(row, db)
+    if unavailable:
+        return jsonify({"error": unavailable[0]}), unavailable[1]
+
+    return jsonify(_file_meta_dict(row))
+
+
+@bp.route("/api/group/<group_id>")
+def api_group(group_id):
+    if not valid_upload_id(group_id):
+        return jsonify({"error": "not found"}), 404
+
+    ip = request.remote_addr or "unknown"
+    if not rate_limit("download:" + ip, config.DOWNLOAD_RATE_LIMIT):
+        return jsonify({"error": "rate limit exceeded"}), 429
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM files WHERE group_id = ? ORDER BY group_index", (group_id,)
+    ).fetchall()
+
+    if not rows:
+        return jsonify({"error": "not found"}), 404
+
+    files = []
+    for row in rows:
+        if _check_file_availability(row, db):
+            continue
+        files.append(_file_meta_dict(row))
+
+    if not files:
         return jsonify({"error": "expired"}), 410
 
-    if row["suspended"]:
-        return jsonify({"error": "suspended"}), 451
-
-    return jsonify({
-        "id": row["id"],
-        "iv": base64.b64encode(row["iv"]).decode(),
-        "encrypted_filename": base64.b64encode(row["encrypted_filename"]).decode(),
-        "size": row["size"],
-        "expiry": row["expiry"],
-        "has_password": bool(row["has_password"]),
-        "salt": base64.b64encode(row["salt"]).decode() if row["salt"] else None,
-        "wrapped_key": base64.b64encode(row["wrapped_key"]).decode() if row["wrapped_key"] else None,
-        "max_downloads": row["max_downloads"],
-        "downloads": row["downloads"],
-        "created": row["created"],
-    })
+    return jsonify({"group_id": group_id, "files": files})
 
 
 @bp.route("/api/file/<file_id>")

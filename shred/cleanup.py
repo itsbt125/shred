@@ -23,22 +23,16 @@ def cleanup_expired():
                 db.execute("DELETE FROM files WHERE id = ?", (row["id"],))
             db.execute("DELETE FROM tokens WHERE expires < ?", (now,))
 
-            # rate_limit() only prunes the specific bucket it's currently
-            # checking, so an IP that stops making requests would
-            # otherwise leave its old hit rows behind forever.
+            # rate_limit() only prunes the bucket it checks, so idle IPs need reaping here too.
             db.execute("DELETE FROM rate_limit_hits WHERE ts < ?", (now - config.RATE_WINDOW,))
 
-            # Reports are retained for moderation history but not forever —
-            # otherwise the table grows unbounded (rate-limited, but still).
             if config.REPORTS_RETENTION_SECONDS > 0:
                 db.execute(
                     "DELETE FROM reports WHERE created < ?",
                     (now - config.REPORTS_RETENTION_SECONDS,),
                 )
 
-            # Chunked uploads abandoned mid-transfer (browser closed, network
-            # died) never reach /api/upload/finish, so their partial file
-            # and DB row would otherwise sit around forever.
+            # Reaps uploads abandoned mid-transfer that never reached /api/upload/finish.
             stale_cutoff = now - config.PENDING_UPLOAD_TTL
             pending = db.execute(
                 "SELECT upload_id FROM pending_uploads WHERE created < ?", (stale_cutoff,)

@@ -815,6 +815,17 @@ button.link-secondary:hover {
   overflow-x: auto;
 }
 
+.invite-create-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.invite-create-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .admin-table {
   width: 100%;
   border-collapse: collapse;
@@ -964,6 +975,156 @@ button.link-secondary:hover {
   margin-top: 8px;
   font-size: 12px;
   color: var(--faint);
+}
+
+/* mode toggle (file vs paste text) */
+
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+}
+
+.mode-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.mode-btn + .mode-btn {
+  border-left: 1px solid var(--border);
+}
+
+.mode-btn:hover {
+  color: var(--text);
+}
+
+.mode-btn.active {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* paste text areas (upload composer + read-only recipient view) */
+
+.paste-textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 140px;
+}
+
+.paste-textarea::placeholder {
+  color: var(--border);
+}
+
+.paste-textarea:focus {
+  border-color: var(--text);
+}
+
+.paste-count {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--faint);
+  text-align: right;
+}
+
+.paste-count-over {
+  color: #e05555;
+}
+
+.paste-view {
+  margin: 16px 0;
+  text-align: left;
+}
+
+.paste-view .copy-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+
+/* result actions (delete link) + QR */
+
+.result-actions {
+  margin-top: 10px;
+}
+
+.result-delete-status {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--faint);
+  text-align: center;
+  min-height: 1em;
+}
+
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.qr-wrap canvas {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+}
+
+/* multi-file group download list */
+
+.group-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-file-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.group-file-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.group-file-meta {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.group-file-btn {
+  align-self: flex-start;
+}
+
+.group-zip-actions {
+  margin-top: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 /* reduced motion */

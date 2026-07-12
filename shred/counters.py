@@ -2,19 +2,10 @@ import time
 
 from shred.db import get_db
 
-# Process start time only — this deliberately is NOT persisted. "uptime" on
-# the status/admin pages means time since this worker last started, same
-# convention as most status pages; a genuine restart should reset it.
+# Not persisted — "uptime" means time since this worker last started.
 _start_time = time.time()
 
-# Lifetime totals ARE persisted (in the kv table) rather than kept as
-# in-memory counters. With multiple gunicorn worker processes (gthread),
-# each worker has its own separate memory — an in-memory counter would
-# silently diverge between workers instead of reflecting the true total,
-# and would reset to zero on every restart regardless. Both problems go
-# away by treating the DB as the single source of truth; these are only
-# written once per completed upload/download, not per chunk, so the extra
-# write is negligible.
+# Persisted in kv (not in-memory) so counts don't diverge across gunicorn worker processes.
 
 
 def _increment(key):

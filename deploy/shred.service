@@ -9,26 +9,13 @@ Group=shred
 WorkingDirectory=/opt/shred
 EnvironmentFile=/opt/shred/.env
 
-# Werkzeug's multipart parser spools uploads above ~500KB to a temp file
-# before the app ever sees them. With PrivateTmp=true that's normally the
-# unit's private /tmp, which on many distros is a small RAM-backed tmpfs —
-# a large upload can exhaust it (ENOSPC) even though real disk is free.
-# Point it at real disk instead, sized for MAX_SIZE_BYTES + headroom.
+# PrivateTmp's default /tmp is often a small RAM-backed tmpfs; point it at
+# real disk since uploads spool there before the app sees them.
 Environment=TMPDIR=/opt/shred/tmp
 
-# Per-request memory is low regardless of file size (both upload and
-# download streams move fixed-size chunks through disk, not whole files),
-# so a single sync worker mainly costs you concurrency, not memory. Without
-# it, one long-running upload/download blocks every other request — including
-# unrelated pages — for the duration of the transfer. gthread lets a worker
-# serve other requests while one connection is blocked on file/socket I/O
-# (which releases the GIL), so this buys concurrency cheaply.
-#
-# --workers: start at (CPU cores), raise if the box has RAM to spare.
-# --threads: 4 is a reasonable default; raise for more concurrent
-#            transfers per worker, at the cost of more open files/sockets.
-# Tune both to your own hardware — these are starting points, not a fixed
-# requirement.
+# gthread lets a worker serve other requests during a slow upload/download
+# instead of blocking the whole process. Tune --workers/--threads to your
+# own hardware — these are starting points, not a requirement.
 ExecStart=/opt/shred/venv/bin/gunicorn --workers 2 --worker-class gthread --threads 4 --bind 127.0.0.1:8000 --timeout 3600 server:app
 
 Restart=on-failure

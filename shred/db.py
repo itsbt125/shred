@@ -32,6 +32,20 @@ def init_db():
     cols = [r["name"] for r in db.execute("PRAGMA table_info(files)").fetchall()]
     if "suspended" not in cols:
         db.execute("ALTER TABLE files ADD COLUMN suspended INTEGER DEFAULT 0")
+    for col, ddl in (
+        ("content_kind", "ALTER TABLE files ADD COLUMN content_kind TEXT NOT NULL DEFAULT 'file'"),
+        ("delete_token_hash", "ALTER TABLE files ADD COLUMN delete_token_hash TEXT"),
+        ("group_id", "ALTER TABLE files ADD COLUMN group_id TEXT"),
+        ("group_index", "ALTER TABLE files ADD COLUMN group_index INTEGER NOT NULL DEFAULT 0"),
+        ("group_count", "ALTER TABLE files ADD COLUMN group_count INTEGER NOT NULL DEFAULT 1"),
+    ):
+        if col not in cols:
+            db.execute(ddl)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_files_group_id ON files(group_id)")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_group_id_index "
+        "ON files(group_id, group_index) WHERE group_id IS NOT NULL"
+    )
     db.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,11 +65,7 @@ def init_db():
         )
     """)
     db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
-    # A plain in-memory rate limiter breaks under multiple gunicorn worker
-    # processes — each process has its own separate memory, so the
-    # effective limit silently multiplies by the worker count instead of
-    # being enforced globally. The DB is the only state shared across
-    # workers, so it's the source of truth here too.
+    # DB-backed so rate limits are shared across gunicorn worker processes.
     db.execute("""
         CREATE TABLE IF NOT EXISTS rate_limit_hits (
             bucket TEXT NOT NULL,
@@ -79,6 +89,27 @@ def init_db():
             created INTEGER NOT NULL
         )
     """)
+    pending_cols = [r["name"] for r in db.execute("PRAGMA table_info(pending_uploads)").fetchall()]
+    for col, ddl in (
+        ("content_kind", "ALTER TABLE pending_uploads ADD COLUMN content_kind TEXT NOT NULL DEFAULT 'file'"),
+        ("group_id", "ALTER TABLE pending_uploads ADD COLUMN group_id TEXT"),
+        ("group_index", "ALTER TABLE pending_uploads ADD COLUMN group_index INTEGER NOT NULL DEFAULT 0"),
+        ("group_count", "ALTER TABLE pending_uploads ADD COLUMN group_count INTEGER NOT NULL DEFAULT 1"),
+    ):
+        if col not in pending_cols:
+            db.execute(ddl)
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS invite_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created INTEGER NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            last_used INTEGER
+        )
+    """)
+
     db.commit()
     db.close()
 
@@ -108,12 +139,7 @@ def get_db():
         g.db = sqlite3.connect(str(config.DB_PATH))
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA journal_mode = WAL")
-        # Every rate-limited request (upload/download/report/admin) and every
-        # download/chunk takes a BEGIN IMMEDIATE write lock, and with multiple
-        # gunicorn workers + threads these serialize on SQLite's single-writer
-        # lock. Without a busy timeout a writer that can't grab the lock
-        # immediately raises "database is locked"; 5s lets it wait its turn
-        # instead of erroring out under normal contention.
+        # Without a busy timeout, concurrent BEGIN IMMEDIATE writers raise "database is locked".
         g.db.execute("PRAGMA busy_timeout = 5000")
     return g.db
 

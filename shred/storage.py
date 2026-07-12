@@ -16,10 +16,7 @@ def storage_path(file_id):
     return config.UPLOAD_DIR / clean[:2] / clean[2:4] / (file_id + ".enc")
 
 
-# Partial uploads live under UPLOAD_DIR (not TMPDIR) specifically so the
-# finish step can os.replace() them straight into final storage — an
-# atomic, same-filesystem rename regardless of file size, instead of a
-# cross-device copy.
+# Lives under UPLOAD_DIR (not TMPDIR) so finish can os.replace() it in-place — same filesystem, no cross-device copy.
 def partial_storage_path(upload_id):
     return config.UPLOAD_DIR / "partial" / (upload_id + ".part")
 

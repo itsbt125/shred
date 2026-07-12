@@ -53,6 +53,26 @@
         </div>
       </div>
 
+      <h2 class="admin-h">invite tokens <span class="admin-count" id="invites-count"></span></h2>
+      <div class="admin-table-wrap">
+        <div class="invite-create-row">
+          <input type="text" id="invite-name-input" placeholder="name (e.g. a friend's name)" maxlength="100">
+          <button class="btn" id="invite-create-btn">create</button>
+        </div>
+        <div class="admin-token-box" id="invite-new-box" hidden>
+          <div class="admin-token-value" id="invite-new-value"></div>
+          <div class="admin-token-meta">Copy this now — it won't be shown again.</div>
+          <div class="admin-token-actions">
+            <button class="copy-btn" id="invite-new-copy">copy</button>
+          </div>
+        </div>
+        <table class="admin-table" id="invites-table">
+          <thead><tr><th>name</th><th>created</th><th>last used</th><th>status</th><th></th></tr></thead>
+          <tbody id="invites-body"></tbody>
+        </table>
+        <div class="admin-empty" id="invites-empty" hidden>no invite tokens</div>
+      </div>
+
       <h2 class="admin-h">stored files <span class="admin-count" id="files-count"></span></h2>
       <div class="admin-table-wrap">
         <table class="admin-table" id="files-table">

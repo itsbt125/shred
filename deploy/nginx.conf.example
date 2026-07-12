@@ -13,11 +13,8 @@ server {
     ssl_certificate     /etc/letsencrypt/live/shred.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/shred.example.com/privkey.pem;
 
-    # Uploads are chunked client-side (~1MiB ciphertext per request), so no
-    # single request needs anywhere near the full file size — must be >=
-    # MAX_UPLOAD_CHUNK_BYTES (default 2MiB) or nginx 413s legitimate chunks
-    # before the app sees them. Overall file size is capped separately, by
-    # MAX_SIZE_BYTES, across the whole chunked upload session server-side.
+    # Must be >= MAX_UPLOAD_CHUNK_BYTES (default 2MiB); overall size is
+    # capped separately server-side across the whole chunked upload.
     client_max_body_size 8m;
 
     proxy_request_buffering off;
