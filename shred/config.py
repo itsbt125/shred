@@ -61,6 +61,9 @@ MAX_DOWNLOADS_CAP = _env_int("MAX_DOWNLOADS_CAP", 1000)
 ADMIN_RATE_LIMIT = _env_int("ADMIN_RATE_LIMIT", 30)
 
 _DEFAULT_EXPIRY_OPTIONS = [
+    {"label": "5 minutes", "seconds": 300},
+    {"label": "15 minutes", "seconds": 900},
+    {"label": "30 minutes", "seconds": 1800},
     {"label": "1 hour", "seconds": 3600},
     {"label": "1 day", "seconds": 86400, "default": True},
     {"label": "1 week", "seconds": 604800},
