@@ -12,7 +12,7 @@ from shred import config
 from shred.config import ip_allowed
 from shred.counters import record_download, record_upload
 from shred.db import get_db
-from shred.security import hash_token, rate_limit, safe_compare, token_gating_effective, upload_token_valid
+from shred.security import hash_token, rate_limit, resolve_upload_credential, safe_compare, token_gating_effective
 from shred.storage import (
     generate_id,
     partial_storage_path,
@@ -144,9 +144,12 @@ def api_upload_init():
     if not rate_limit("upload:" + ip, config.UPLOAD_RATE_LIMIT):
         return jsonify({"error": "rate limit exceeded"}), 429
 
+    upload_via = None
+    invite_token_id = None
     if token_gating_effective():
         provided = request.headers.get("X-Upload-Token") or request.form.get("upload_token", "")
-        if not upload_token_valid(provided):
+        valid, upload_via, invite_token_id = resolve_upload_credential(provided)
+        if not valid:
             return jsonify({"error": "a valid upload token is required"}), 403
 
     metadata, error = _validate_upload_metadata(request.form)
@@ -173,13 +176,13 @@ def api_upload_init():
             """INSERT INTO pending_uploads
                (upload_id, bytes_received, next_chunk_index, encrypted_filename, iv, size,
                 expiry, max_downloads, has_password, salt, wrapped_key, created,
-                content_kind, group_id, group_index, group_count)
-               VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                content_kind, group_id, group_index, group_count, upload_via, invite_token_id)
+               VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (upload_id, metadata["encrypted_filename"], metadata["iv"], metadata["size"],
              metadata["expiry"], metadata["max_downloads"], metadata["has_password"],
              metadata["salt"], metadata["wrapped_key"], int(time.time()),
              metadata["content_kind"], metadata["group_id"], metadata["group_index"],
-             metadata["group_count"])
+             metadata["group_count"], upload_via, invite_token_id)
         )
         db.commit()
     except Exception:
@@ -317,12 +320,13 @@ def api_upload_finish():
             """INSERT INTO files
                (id, encrypted_filename, iv, size, expiry,
                 max_downloads, downloads, has_password, salt, wrapped_key, created,
-                content_kind, group_id, group_index, group_count, delete_token_hash)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                content_kind, group_id, group_index, group_count, delete_token_hash,
+                upload_via, invite_token_id)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (file_id, row["encrypted_filename"], row["iv"], row["size"], row["expiry"],
              row["max_downloads"], row["has_password"], row["salt"], row["wrapped_key"],
              int(time.time()), row["content_kind"], row["group_id"], row["group_index"],
-             row["group_count"], delete_token_hash)
+             row["group_count"], delete_token_hash, row["upload_via"], row["invite_token_id"])
         )
         db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (upload_id,))
         db.commit()

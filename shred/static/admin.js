@@ -103,6 +103,36 @@
 
   var filesState = { offset: 0, total: 0 };
   var reportsState = { offset: 0, total: 0 };
+  var filesFilterInviteId = null;
+
+  function viaLabel(f) {
+    if (f.invite_name) return "invite: " + f.invite_name;
+    if (f.upload_via === "static") return "static token";
+    if (f.upload_via === "rotating") return "rotating token";
+    return "—";
+  }
+
+  function setFilesFilter(inviteId, name) {
+    filesFilterInviteId = inviteId;
+    var filterEl = document.getElementById("files-filter");
+    document.getElementById("files-filter-name").textContent = name || "";
+    filterEl.hidden = !inviteId;
+    filesState = { offset: 0, total: 0 };
+    loadFiles(false);
+  }
+
+  function loadFiles(append) {
+    var path = "/api/admin/files?offset=" + filesState.offset;
+    if (filesFilterInviteId) path += "&invite_id=" + encodeURIComponent(filesFilterInviteId);
+    return adminFetch(path)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var files = d.files || [];
+        filesState.total = d.total || 0;
+        filesState.offset = append ? filesState.offset + files.length : files.length;
+        renderFiles(files, d.now || Math.floor(Date.now() / 1000), append);
+      });
+  }
 
   function renderFiles(list, now, append) {
     var body = document.getElementById("files-body");
@@ -125,6 +155,18 @@
         f.downloads + maxDl,
         f.has_password ? "yes" : "",
       ]);
+
+      var viaTd = document.createElement("td");
+      if (f.invite_token_id) {
+        var viaBtn = document.createElement("button");
+        viaBtn.className = "link-action";
+        viaBtn.textContent = "invite: " + f.invite_name;
+        viaBtn.addEventListener("click", function () { setFilesFilter(f.invite_token_id, f.invite_name); });
+        viaTd.appendChild(viaBtn);
+      } else {
+        viaTd.textContent = viaLabel(f);
+      }
+      tr.appendChild(viaTd);
 
       var statusTd = document.createElement("td");
       var badge = document.createElement("span");
@@ -289,6 +331,19 @@
         inv.last_used ? fmtAgo(inv.last_used, now) : "never",
       ]);
 
+      var usageTd = document.createElement("td");
+      if (inv.active_files > 0) {
+        var usageBtn = document.createElement("button");
+        usageBtn.className = "link-action";
+        usageBtn.textContent = inv.active_files + " file" + (inv.active_files === 1 ? "" : "s") +
+          " (" + fmtBytes(inv.active_bytes) + ")";
+        usageBtn.addEventListener("click", function () { setFilesFilter(inv.id, inv.name); });
+        usageTd.appendChild(usageBtn);
+      } else {
+        usageTd.textContent = "0 files";
+      }
+      tr.appendChild(usageTd);
+
       var statusTd = document.createElement("td");
       var badge = document.createElement("span");
       badge.className = inv.revoked ? "badge badge-suspended" : "badge badge-active";
@@ -375,21 +430,16 @@
     reportsState = { offset: 0, total: 0 };
     Promise.all([
       adminFetch("/api/admin/overview").then(function (r) { return r.json(); }),
-      adminFetch("/api/admin/files").then(function (r) { return r.json(); }),
+      loadFiles(false),
       adminFetch("/api/admin/reports").then(function (r) { return r.json(); }),
       refreshInvites(),
     ]).then(function (results) {
       document.getElementById("admin-refresh-error").textContent = "";
-      var now = results[1].now || Math.floor(Date.now() / 1000);
       renderOverview(results[0]);
-      var files = results[1].files || [];
-      filesState.total = results[1].total || 0;
-      filesState.offset = files.length;
-      renderFiles(files, now, false);
       var reports = results[2].reports || [];
       reportsState.total = results[2].total || 0;
       reportsState.offset = reports.length;
-      renderReports(reports, now, false);
+      renderReports(reports, Math.floor(Date.now() / 1000), false);
     }).catch(function () {
       document.getElementById("admin-refresh-error").textContent = "could not refresh — network error";
     });
@@ -398,16 +448,7 @@
   function loadMoreFiles() {
     var btn = document.getElementById("files-load-more");
     btn.disabled = true;
-    adminFetch("/api/admin/files?offset=" + filesState.offset)
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        btn.disabled = false;
-        var files = d.files || [];
-        filesState.total = d.total || filesState.total;
-        filesState.offset += files.length;
-        renderFiles(files, d.now || Math.floor(Date.now() / 1000), true);
-      })
-      .catch(function () { btn.disabled = false; });
+    loadFiles(true).catch(function () {}).then(function () { btn.disabled = false; });
   }
 
   function loadMoreReports() {
@@ -459,6 +500,7 @@
   document.getElementById("admin-refresh").addEventListener("click", refresh);
   document.getElementById("files-load-more").addEventListener("click", loadMoreFiles);
   document.getElementById("reports-load-more").addEventListener("click", loadMoreReports);
+  document.getElementById("files-filter-clear").addEventListener("click", function () { setFilesFilter(null, null); });
   document.getElementById("admin-logout").addEventListener("click", function () {
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}
     token = null;

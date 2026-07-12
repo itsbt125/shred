@@ -38,6 +38,8 @@ def init_db():
         ("group_id", "ALTER TABLE files ADD COLUMN group_id TEXT"),
         ("group_index", "ALTER TABLE files ADD COLUMN group_index INTEGER NOT NULL DEFAULT 0"),
         ("group_count", "ALTER TABLE files ADD COLUMN group_count INTEGER NOT NULL DEFAULT 1"),
+        ("upload_via", "ALTER TABLE files ADD COLUMN upload_via TEXT"),
+        ("invite_token_id", "ALTER TABLE files ADD COLUMN invite_token_id INTEGER"),
     ):
         if col not in cols:
             db.execute(ddl)
@@ -46,6 +48,7 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_group_id_index "
         "ON files(group_id, group_index) WHERE group_id IS NOT NULL"
     )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_files_invite_token_id ON files(invite_token_id)")
     db.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +98,8 @@ def init_db():
         ("group_id", "ALTER TABLE pending_uploads ADD COLUMN group_id TEXT"),
         ("group_index", "ALTER TABLE pending_uploads ADD COLUMN group_index INTEGER NOT NULL DEFAULT 0"),
         ("group_count", "ALTER TABLE pending_uploads ADD COLUMN group_count INTEGER NOT NULL DEFAULT 1"),
+        ("upload_via", "ALTER TABLE pending_uploads ADD COLUMN upload_via TEXT"),
+        ("invite_token_id", "ALTER TABLE pending_uploads ADD COLUMN invite_token_id INTEGER"),
     ):
         if col not in pending_cols:
             db.execute(ddl)

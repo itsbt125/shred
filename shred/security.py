@@ -76,20 +76,21 @@ def rotating_token_valid(provided):
     return ok
 
 
-def invite_token_valid(provided):
+def matching_invite_token(provided):
+    """Returns the matched invite_tokens row (and bumps last_used) or None."""
     if not provided:
-        return False
+        return None
     db = get_db()
     h = hash_token(provided)
     match = None
-    for row in db.execute("SELECT id, token_hash FROM invite_tokens WHERE revoked = 0").fetchall():
+    for row in db.execute("SELECT id, name, token_hash FROM invite_tokens WHERE revoked = 0").fetchall():
         if safe_compare(h, row["token_hash"]):
             match = row
     if not match:
-        return False
+        return None
     db.execute("UPDATE invite_tokens SET last_used = ? WHERE id = ?", (int(time.time()), match["id"]))
     db.commit()
-    return True
+    return match
 
 
 def any_invite_tokens_exist():
@@ -103,12 +104,19 @@ def token_gating_effective():
     return config.token_gating_enabled() or any_invite_tokens_exist()
 
 
-def upload_token_valid(provided):
+def resolve_upload_credential(provided):
+    """Identifies which credential authorized an upload, for attribution.
+    Returns (valid, upload_via, invite_token_id) — upload_via is one of
+    "static"/"rotating"/"invite"/None, invite_token_id only set for "invite".
+    """
     if config.UPLOAD_TOKEN and safe_compare(provided, config.UPLOAD_TOKEN):
-        return True
+        return True, "static", None
     if rotating_token_valid(provided):
-        return True
-    return invite_token_valid(provided)
+        return True, "rotating", None
+    invite = matching_invite_token(provided)
+    if invite:
+        return True, "invite", invite["id"]
+    return False, None, None
 
 
 def require_admin():

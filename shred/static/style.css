@@ -815,6 +815,12 @@ button.link-secondary:hover {
   overflow-x: auto;
 }
 
+.files-filter {
+  font-size: 12px;
+  color: var(--faint);
+  margin-bottom: 10px;
+}
+
 .invite-create-row {
   display: flex;
   gap: 10px;
@@ -824,6 +830,26 @@ button.link-secondary:hover {
 .invite-create-row input {
   flex: 1;
   min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+.invite-create-row input::placeholder {
+  color: var(--border);
+}
+
+.invite-create-row input:focus {
+  border-color: var(--text);
+}
+
+.invite-create-row .btn {
+  font-size: 13px;
+  padding: 8px 16px;
+  white-space: nowrap;
 }
 
 .admin-table {

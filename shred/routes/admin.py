@@ -126,14 +126,23 @@ def api_admin_files():
 
     limit = _parse_limit()
     offset = _parse_offset()
+    invite_id = request.args.get("invite_id")
 
     db = get_db()
     now = int(time.time())
-    total = db.execute("SELECT COUNT(*) AS c FROM files WHERE expiry > ?", (now,)).fetchone()["c"]
+    where = "f.expiry > ?"
+    params = [now]
+    if invite_id:
+        where += " AND f.invite_token_id = ?"
+        params.append(invite_id)
+
+    total = db.execute(f"SELECT COUNT(*) AS c FROM files f WHERE {where}", params).fetchone()["c"]
     rows = db.execute(
-        """SELECT id, size, created, expiry, downloads, max_downloads, has_password, suspended
-           FROM files WHERE expiry > ? ORDER BY suspended DESC, created DESC LIMIT ? OFFSET ?""",
-        (now, limit, offset),
+        f"""SELECT f.id, f.size, f.created, f.expiry, f.downloads, f.max_downloads, f.has_password,
+                   f.suspended, f.upload_via, f.invite_token_id, i.name AS invite_name
+            FROM files f LEFT JOIN invite_tokens i ON f.invite_token_id = i.id
+            WHERE {where} ORDER BY f.suspended DESC, f.created DESC LIMIT ? OFFSET ?""",
+        params + [limit, offset],
     ).fetchall()
     files = [{
         "id": r["id"],
@@ -144,6 +153,9 @@ def api_admin_files():
         "max_downloads": r["max_downloads"],
         "has_password": bool(r["has_password"]),
         "suspended": bool(r["suspended"]),
+        "upload_via": r["upload_via"],
+        "invite_token_id": r["invite_token_id"],
+        "invite_name": r["invite_name"],
     } for r in rows]
     return jsonify({"files": files, "now": now, "total": total, "offset": offset})
 
@@ -272,12 +284,19 @@ def api_admin_list_invites():
     if guard:
         return guard
     db = get_db()
+    now = int(time.time())
     rows = db.execute(
-        "SELECT id, name, created, revoked, last_used FROM invite_tokens ORDER BY created DESC"
+        """SELECT i.id, i.name, i.created, i.revoked, i.last_used,
+                  COUNT(f.id) AS active_files, COALESCE(SUM(f.size), 0) AS active_bytes
+           FROM invite_tokens i
+           LEFT JOIN files f ON f.invite_token_id = i.id AND f.expiry > ?
+           GROUP BY i.id ORDER BY i.created DESC""",
+        (now,),
     ).fetchall()
     return jsonify({"invites": [{
         "id": r["id"], "name": r["name"], "created": r["created"],
         "revoked": bool(r["revoked"]), "last_used": r["last_used"],
+        "active_files": r["active_files"], "active_bytes": r["active_bytes"],
     } for r in rows]})
 
 

@@ -67,7 +67,7 @@
           </div>
         </div>
         <table class="admin-table" id="invites-table">
-          <thead><tr><th>name</th><th>created</th><th>last used</th><th>status</th><th></th></tr></thead>
+          <thead><tr><th>name</th><th>created</th><th>last used</th><th>files used</th><th>status</th><th></th></tr></thead>
           <tbody id="invites-body"></tbody>
         </table>
         <div class="admin-empty" id="invites-empty" hidden>no invite tokens</div>
@@ -75,8 +75,12 @@
 
       <h2 class="admin-h">stored files <span class="admin-count" id="files-count"></span></h2>
       <div class="admin-table-wrap">
+        <div class="files-filter" id="files-filter" hidden>
+          filtered by invite: <span id="files-filter-name"></span>
+          <button class="link-action" id="files-filter-clear">clear</button>
+        </div>
         <table class="admin-table" id="files-table">
-          <thead><tr><th>id</th><th>size</th><th>uploaded</th><th>expires</th><th>dl</th><th>pw</th><th>status</th><th></th></tr></thead>
+          <thead><tr><th>id</th><th>size</th><th>uploaded</th><th>expires</th><th>dl</th><th>pw</th><th>via</th><th>status</th><th></th></tr></thead>
           <tbody id="files-body"></tbody>
         </table>
         <div class="admin-empty" id="files-empty" hidden>no files stored</div>
