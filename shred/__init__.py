@@ -86,6 +86,8 @@ def create_app(bootstrap=True):
     # comment on MAX_UPLOAD_CHUNK_BYTES for why this used to be much larger.
     app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_CHUNK_BYTES
 
+    logging.getLogger("shred").setLevel(logging.ERROR)
+
     if config.TRUSTED_PROXY_COUNT > 0:
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
@@ -99,11 +101,16 @@ def create_app(bootstrap=True):
         # limit bucket and any IP allowlist compares against the proxy, not
         # the real client. Only correct to leave at 0 if the app is directly
         # internet-facing with no proxy in front.
-        logging.getLogger("shred").warning(
-            "TRUSTED_PROXY_COUNT=0: using the direct peer as the client IP. "
-            "If a reverse proxy sits in front of shred, set TRUSTED_PROXY_COUNT "
-            "to the number of proxies or per-IP rate limiting and IP allowlisting "
-            "will not work correctly."
+        #
+        # Printed rather than logged on purpose: the "shred" logger is pinned
+        # to ERROR above, which would swallow a warning-level record, and this
+        # is a one-shot startup notice (same approach as ensure_admin_token).
+        print(
+            "[shred] WARNING TRUSTED_PROXY_COUNT=0: using the direct peer as the "
+            "client IP. If a reverse proxy sits in front of shred, set "
+            "TRUSTED_PROXY_COUNT to the number of proxies, or per-IP rate limiting "
+            "and IP allowlisting will not work correctly.",
+            flush=True,
         )
 
     app.wsgi_app = _StripServerHeader(app.wsgi_app)
