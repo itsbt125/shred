@@ -1,9 +1,11 @@
 import base64
 import errno
+import math
 import os
 import secrets
 import shutil
 import sqlite3
+import threading
 import time
 
 from flask import Blueprint, Response, jsonify, request
@@ -12,7 +14,14 @@ from shred import config
 from shred.config import ip_allowed
 from shred.counters import record_download, record_upload
 from shred.db import get_db
-from shred.security import hash_token, rate_limit, resolve_upload_credential, safe_compare, token_gating_effective
+from shred.security import (
+    hash_token,
+    rate_limit,
+    rate_limit_mem,
+    resolve_upload_credential,
+    safe_compare,
+    token_gating_effective,
+)
 from shred.storage import (
     generate_id,
     partial_storage_path,
@@ -26,6 +35,30 @@ from shred.storage import (
 )
 
 bp = Blueprint("files", __name__)
+
+# Per-IP in-flight chunk-upload concurrency cap (in-memory, per worker). Bounds how many
+# simultaneous /api/upload/chunk requests one client can have open, so a single IP can't
+# saturate the worker pool. IPs are held only in this dict for the life of in-flight requests.
+_chunk_ip_lock = threading.Lock()
+_chunk_ip_count = {}
+
+
+def _acquire_chunk_ip(ip):
+    with _chunk_ip_lock:
+        n = _chunk_ip_count.get(ip, 0)
+        if n >= config.MAX_CONCURRENT_CHUNKS_PER_IP:
+            return False
+        _chunk_ip_count[ip] = n + 1
+        return True
+
+
+def _release_chunk_ip(ip):
+    with _chunk_ip_lock:
+        n = _chunk_ip_count.get(ip, 0)
+        if n <= 1:
+            _chunk_ip_count.pop(ip, None)
+        else:
+            _chunk_ip_count[ip] = n - 1
 
 
 def _validate_upload_metadata(form):
@@ -141,8 +174,17 @@ def api_upload_init():
     if not ip_allowed(ip):
         return jsonify({"error": "uploads are not permitted from your network"}), 403
 
-    if not rate_limit("upload:" + ip, config.UPLOAD_RATE_LIMIT):
+    if not rate_limit_mem("upload:" + ip, config.UPLOAD_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429
+
+    db = get_db()
+    if config.MAX_PENDING_UPLOADS > 0:
+        try:
+            pending = db.execute("SELECT COUNT(*) AS c FROM pending_uploads").fetchone()["c"]
+        except Exception:
+            pending = 0
+        if pending >= config.MAX_PENDING_UPLOADS:
+            return jsonify({"error": "server busy, try again later"}), 429
 
     upload_via = None
     invite_token_id = None
@@ -170,7 +212,6 @@ def api_upload_init():
     except OSError:
         return jsonify({"error": "could not start upload"}), 500
 
-    db = get_db()
     try:
         db.execute(
             """INSERT INTO pending_uploads
@@ -205,66 +246,75 @@ def api_upload_chunk():
     if not safe_partial_path(partial_path):
         return jsonify({"error": "invalid upload"}), 400
 
-    chunk_index = int(chunk_index_str)
-    chunk_file = request.files["chunk"]
-
-    db = get_db()
-    db.execute("BEGIN IMMEDIATE")
+    ip = request.remote_addr or "unknown"
+    if not _acquire_chunk_ip(ip):
+        return jsonify({"error": "too many concurrent uploads"}), 429
     try:
-        row = db.execute("SELECT * FROM pending_uploads WHERE upload_id = ?", (upload_id,)).fetchone()
-        if not row:
-            db.execute("ROLLBACK")
-            return jsonify({"error": "unknown or expired upload"}), 404
+        if not rate_limit("chunk:" + upload_id, config.CHUNK_RATE_LIMIT, config.CHUNK_RATE_WINDOW):
+            return jsonify({"error": "chunk rate limit exceeded"}), 429
 
-        if chunk_index != row["next_chunk_index"]:
-            db.execute("ROLLBACK")
-            return jsonify({"error": "unexpected chunk index"}), 409
+        chunk_index = int(chunk_index_str)
+        chunk_file = request.files["chunk"]
 
-        # Must truncate the partial file back to bytes_received on any failed
-        # append, or its on-disk length drifts and later chunks land at the wrong offset.
-        base_len = row["bytes_received"]
+        db = get_db()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            row = db.execute("SELECT * FROM pending_uploads WHERE upload_id = ?", (upload_id,)).fetchone()
+            if not row:
+                db.execute("ROLLBACK")
+                return jsonify({"error": "unknown or expired upload"}), 404
 
-        def _truncate_back():
+            if chunk_index != row["next_chunk_index"]:
+                db.execute("ROLLBACK")
+                return jsonify({"error": "unexpected chunk index"}), 409
+
+            # Must truncate the partial file back to bytes_received on any failed
+            # append, or its on-disk length drifts and later chunks land at the wrong offset.
+            base_len = row["bytes_received"]
+
+            def _truncate_back():
+                try:
+                    with open(partial_path, "r+b") as tf:
+                        tf.truncate(base_len)
+                except OSError:
+                    pass
+
+            written = 0
             try:
-                with open(partial_path, "r+b") as tf:
-                    tf.truncate(base_len)
-            except OSError:
-                pass
+                with open(partial_path, "ab") as f:
+                    while True:
+                        data = chunk_file.stream.read(65536)
+                        if not data:
+                            break
+                        if base_len + written + len(data) > config.MAX_CIPHERTEXT_SIZE:
+                            f.close()
+                            _truncate_back()
+                            db.execute("ROLLBACK")
+                            return jsonify({"error": "file too large"}), 413
+                        written += len(data)
+                        f.write(data)
+            except OSError as e:
+                _truncate_back()
+                db.execute("ROLLBACK")
+                if e.errno == errno.ENOSPC:
+                    return jsonify({"error": "server storage full, try again later"}), 507
+                return jsonify({"error": "storage failed"}), 500
 
-        written = 0
-        try:
-            with open(partial_path, "ab") as f:
-                while True:
-                    data = chunk_file.stream.read(65536)
-                    if not data:
-                        break
-                    if base_len + written + len(data) > config.MAX_CIPHERTEXT_SIZE:
-                        f.close()
-                        _truncate_back()
-                        db.execute("ROLLBACK")
-                        return jsonify({"error": "file too large"}), 413
-                    written += len(data)
-                    f.write(data)
-        except OSError as e:
-            _truncate_back()
-            db.execute("ROLLBACK")
-            if e.errno == errno.ENOSPC:
-                return jsonify({"error": "server storage full, try again later"}), 507
-            return jsonify({"error": "storage failed"}), 500
-
-        db.execute(
-            "UPDATE pending_uploads SET bytes_received = ?, next_chunk_index = ? WHERE upload_id = ?",
-            (base_len + written, chunk_index + 1, upload_id),
-        )
-        db.execute("COMMIT")
-    except Exception:
-        try:
-            db.execute("ROLLBACK")
+            db.execute(
+                "UPDATE pending_uploads SET bytes_received = ?, next_chunk_index = ? WHERE upload_id = ?",
+                (base_len + written, chunk_index + 1, upload_id),
+            )
+            db.execute("COMMIT")
         except Exception:
-            pass
-        raise
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
 
-    return jsonify({"received": chunk_index + 1})
+        return jsonify({"received": chunk_index + 1})
+    finally:
+        _release_chunk_ip(ip)
 
 
 @bp.route("/api/upload/finish", methods=["POST"])
@@ -277,10 +327,28 @@ def api_upload_finish():
     if not safe_partial_path(partial_path):
         return jsonify({"error": "invalid upload"}), 400
 
+    ip = request.remote_addr or "unknown"
+    if not rate_limit_mem("finish:" + ip, config.UPLOAD_RATE_LIMIT, config.RATE_WINDOW):
+        return jsonify({"error": "rate limit exceeded"}), 429
+
     db = get_db()
     row = db.execute("SELECT * FROM pending_uploads WHERE upload_id = ?", (upload_id,)).fetchone()
     if not row:
         return jsonify({"error": "unknown or expired upload"}), 404
+
+    # C1: the declared plaintext size must match the ciphertext actually received.
+    # The client encrypts in CHUNK_SIZE plaintext chunks and AES-GCM appends a
+    # GCM_TAG_SIZE auth tag to each, so the on-disk ciphertext is larger than the
+    # declared plaintext by exactly one tag per chunk (min one chunk, even for an
+    # empty file). Comparing raw bytes to plaintext size would fail every upload.
+    plaintext_size = row["size"]
+    chunk_count = math.ceil(plaintext_size / config.CHUNK_SIZE) if plaintext_size > 0 else 1
+    expected_ciphertext = plaintext_size + chunk_count * config.GCM_TAG_SIZE
+    if row["bytes_received"] != expected_ciphertext:
+        db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (upload_id,))
+        db.commit()
+        remove_partial(upload_id)
+        return jsonify({"error": "size mismatch"}), 400
 
     if row["bytes_received"] == 0 or not partial_path.exists():
         db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (upload_id,))
@@ -366,7 +434,7 @@ def api_delete_file(file_id):
         return jsonify({"error": "not found"}), 404
 
     ip = request.remote_addr or "unknown"
-    if not rate_limit("delete:" + ip, config.DOWNLOAD_RATE_LIMIT):
+    if not rate_limit_mem("delete:" + ip, config.DOWNLOAD_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429
 
     provided = request.headers.get("X-Delete-Token") or request.form.get("delete_token", "")
@@ -445,7 +513,7 @@ def api_group(group_id):
         return jsonify({"error": "not found"}), 404
 
     ip = request.remote_addr or "unknown"
-    if not rate_limit("download:" + ip, config.DOWNLOAD_RATE_LIMIT):
+    if not rate_limit_mem("download:" + ip, config.DOWNLOAD_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429
 
     db = get_db()
@@ -474,7 +542,7 @@ def api_file(file_id):
         return jsonify({"error": "not found"}), 404
 
     ip = request.remote_addr or "unknown"
-    if not rate_limit("download:" + ip, config.DOWNLOAD_RATE_LIMIT):
+    if not rate_limit_mem("download:" + ip, config.DOWNLOAD_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429
 
     db = get_db()
@@ -541,7 +609,6 @@ def api_file(file_id):
     response = Response(generate(), mimetype="application/octet-stream")
     response.headers["Content-Disposition"] = 'attachment; filename="' + file_id + '"'
     response.headers["Content-Length"] = str(file_size)
-    response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -549,7 +616,7 @@ def api_file(file_id):
 @bp.route("/api/report", methods=["POST"])
 def api_report():
     ip = request.remote_addr or "unknown"
-    if not rate_limit("report:" + ip, config.REPORT_RATE_LIMIT):
+    if not rate_limit_mem("report:" + ip, config.REPORT_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429
 
     file_id = request.form.get("file_id", "")
@@ -561,11 +628,13 @@ def api_report():
     db = get_db()
     row = db.execute("SELECT id FROM files WHERE id = ?", (file_id,)).fetchone()
 
+    # The reporter's IP is never stored (privacy-by-default); the operator can still see the
+    # report text and act on it. REPORT_ACTION controls whether a report auto-pauses the file.
     db.execute(
-        "INSERT INTO reports (file_id, reason, ip, existed, created) VALUES (?, ?, ?, ?, ?)",
-        (file_id, reason, ip, 1 if row else 0, int(time.time())),
+        "INSERT INTO reports (file_id, reason, existed, created) VALUES (?, ?, ?, ?)",
+        (file_id, reason, 1 if row else 0, int(time.time())),
     )
-    if row:
+    if row and config.REPORT_ACTION == "suspend":
         db.execute("UPDATE files SET suspended = 1 WHERE id = ?", (file_id,))
     db.commit()
 

@@ -60,6 +60,8 @@ def _handle_413(e):
 
 
 def _handle_404(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "not found"}), 404
     return render_template("expired.html"), 404
 
 

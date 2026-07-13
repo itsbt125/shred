@@ -54,7 +54,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id TEXT NOT NULL,
             reason TEXT,
-            ip TEXT,
             existed INTEGER DEFAULT 0,
             created INTEGER NOT NULL
         )
@@ -115,6 +114,15 @@ def init_db():
         )
     """)
 
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_auth_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            success INTEGER NOT NULL,
+            reason TEXT,
+            created INTEGER NOT NULL
+        )
+    """)
+
     db.commit()
     db.close()
 
@@ -132,9 +140,12 @@ def ensure_admin_token():
         db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('admin_token', ?)", (config.ADMIN_TOKEN,))
         db.commit()
     db.close()
+    # Deliberately do NOT echo the token: writing secrets to logs/stdout is a leak.
+    # Set ADMIN_TOKEN in .env to provide your own; the auto-generated value is stored
+    # in the database key-value store and retrievable only by someone with DB access.
     print(
         f"[shred] upload-token rotation enabled every {config.UPLOAD_TOKEN_ROTATION}s;"
-        f" admin token: {config.ADMIN_TOKEN}",
+        f" an admin token was auto-generated and stored. Set ADMIN_TOKEN in .env to use your own.",
         flush=True,
     )
 

@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+import threading
 import time
 
 from flask import jsonify, request
@@ -21,9 +22,13 @@ def safe_compare(a, b):
         return False
 
 
-def rate_limit(key, max_count):
+def rate_limit(key, max_count, window=None):
+    """DB-backed limit. Used for IP-less buckets (e.g. per-upload_id chunk throttling)
+    that must be shared across gunicorn workers."""
+    if window is None:
+        window = config.RATE_WINDOW
     now = time.time()
-    cutoff = now - config.RATE_WINDOW
+    cutoff = now - window
 
     db = get_db()
     db.execute("BEGIN IMMEDIATE")
@@ -44,6 +49,67 @@ def rate_limit(key, max_count):
         except Exception:
             pass
         raise
+
+
+# In-memory rate limiter for IP-keyed buckets. IPs are never written to disk — they live
+# only in this process for the duration of the sliding window. Trades cross-worker sharing
+# (each gunicorn worker enforces its own limit) for a zero-disk-footprint privacy posture.
+_memory_lock = threading.Lock()
+_memory_hits = {}
+
+
+def rate_limit_mem(key, max_count, window=None):
+    if window is None:
+        window = config.RATE_WINDOW
+    now = time.time()
+    cutoff = now - window
+    with _memory_lock:
+        hits = _memory_hits.get(key)
+        if hits is None:
+            hits = []
+        hits = [t for t in hits if t > cutoff]
+        if len(hits) >= max_count:
+            _memory_hits[key] = hits
+            return False
+        hits.append(now)
+        _memory_hits[key] = hits
+        return True
+
+
+# Admin access-attempt log. Stored IP-less (success / reason / timestamp only). Persisted to
+# the DB unless NO_LOGS is on, in which case it lives only in this in-memory ring buffer.
+_admin_ring_lock = threading.Lock()
+_admin_ring = []
+
+
+def record_admin_auth(success, reason):
+    entry = {"success": success, "reason": reason, "created": int(time.time())}
+    with _admin_ring_lock:
+        _admin_ring.append(entry)
+        if len(_admin_ring) > 200:
+            _admin_ring.pop(0)
+    if not config.NO_LOGS:
+        try:
+            db = get_db()
+            db.execute(
+                "INSERT INTO admin_auth_log (success, reason, created) VALUES (?, ?, ?)",
+                (success, reason, entry["created"]),
+            )
+            db.commit()
+        except Exception:
+            pass
+
+
+def get_admin_auth_log(limit=100):
+    if config.NO_LOGS:
+        with _admin_ring_lock:
+            return [dict(e) for e in reversed(_admin_ring)][:limit]
+    db = get_db()
+    rows = db.execute(
+        "SELECT success, reason, created FROM admin_auth_log ORDER BY created DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [{"success": r["success"], "reason": r["reason"], "created": r["created"]} for r in rows]
 
 
 def get_current_rotating_token(db):
@@ -121,10 +187,13 @@ def resolve_upload_credential(provided):
 
 def require_admin():
     ip = request.remote_addr or "unknown"
-    if not rate_limit("admin:" + ip, config.ADMIN_RATE_LIMIT):
+    if not rate_limit_mem("admin:" + ip, config.ADMIN_RATE_LIMIT, config.RATE_WINDOW):
+        record_admin_auth(0, "rate-limited")
         return jsonify({"error": "rate limit exceeded"}), 429
     # Header only — a query param would leak into proxy access logs and Referer headers.
     provided = request.headers.get("X-Admin-Token", "")
     if not config.ADMIN_TOKEN or not safe_compare(provided, config.ADMIN_TOKEN):
+        record_admin_auth(0, "unauthorized")
         return jsonify({"error": "unauthorized"}), 401
+    record_admin_auth(1, "ok")
     return None

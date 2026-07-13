@@ -8,6 +8,18 @@
 # unlike nginx there's nothing extra to configure for 2 GB uploads.
 
 shred.example.com {
+	# --- Privacy: no request logging ---
+	# shred is a zero-knowledge, no-logs service. Discard access logs so client
+	# IPs and request lines are never written to disk.
+	log {
+		output discard
+	}
+
+	# --- HSTS (set at the proxy, not the app) ---
+	# 2 years, include subdomains. Add 'preload' only once every subdomain is
+	# HTTPS-only and you intend to submit to the preload list.
+	header Strict-Transport-Security "max-age=63072000; includeSubDomains"
+
 	# /admin is already gated by ADMIN_TOKEN. Uncomment to also lock it to an IP/VPN.
 	# @admin_blocked {
 	#     path /admin /api/admin/*

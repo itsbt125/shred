@@ -13,6 +13,17 @@ server {
     ssl_certificate     /etc/letsencrypt/live/shred.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/shred.example.com/privkey.pem;
 
+    # --- Privacy: no request logging ---
+    # shred is a zero-knowledge, no-logs service. Do not persist client IPs or
+    # request lines. Keep only critical errors (not per-request access lines).
+    access_log off;
+    error_log  /var/log/nginx/shred_error.log crit;
+
+    # --- HSTS (set at the proxy, not the app) ---
+    # 2 years, include subdomains. Only add 'preload' once you are certain every
+    # subdomain is HTTPS-only and you intend to submit to the preload list.
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
     # Must be >= MAX_UPLOAD_CHUNK_BYTES (default 2MiB); overall size is
     # capped separately server-side across the whole chunked upload.
     client_max_body_size 8m;
@@ -47,5 +58,6 @@ server {
 server {
     listen 80;
     server_name shred.example.com;
+    access_log off;
     return 301 https://$host$request_uri;
 }

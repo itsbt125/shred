@@ -90,18 +90,35 @@
       <h2 class="admin-h">abuse reports <span class="admin-count" id="reports-count"></span></h2>
       <div class="admin-table-wrap">
         <table class="admin-table" id="reports-table">
-          <thead><tr><th>when</th><th>file id</th><th>reason</th><th>ip</th><th>action</th></tr></thead>
+          <thead><tr><th>when</th><th>file id</th><th>reason</th><th>action</th></tr></thead>
           <tbody id="reports-body"></tbody>
         </table>
         <div class="admin-empty" id="reports-empty" hidden>no reports</div>
         <button class="admin-bar-btn" id="reports-load-more" hidden>load more</button>
       </div>
 
+      <h2 class="admin-h">admin access log</h2>
+      <div class="admin-table-wrap">
+        <table class="admin-table" id="authlog-table">
+          <thead><tr><th>when</th><th>result</th><th>reason</th></tr></thead>
+          <tbody id="authlog-body"></tbody>
+        </table>
+        <div class="admin-empty" id="authlog-empty" hidden>no access attempts logged</div>
+      </div>
+
     </section>
 
-    <a href="/status" class="nav-link">status</a>
-    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
   </main>
+
+  <footer class="site-footer">
+    <nav class="footer-links">
+      <a href="/">home</a>
+      <span class="footer-sep">/</span>
+      <a href="/status">status</a>
+      <span class="footer-sep">/</span>
+      <a href="https://github.com/itsbt125/shred">source code (github)</a>
+    </nav>
+  </footer>
 
 </div>
 

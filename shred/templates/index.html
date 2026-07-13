@@ -18,8 +18,16 @@
     </div>
   </header>
 
-  <main>
-    <p class="subtext">upload a file, get a link, share it. files disappear on their own.</p>
+    <main>
+      <noscript>
+        <div class="noscript-notice">
+          <strong>javascript is required.</strong>
+          <p>shred encrypts and decrypts your files entirely in your browser — the server never sees your plaintext, keys, or passwords. that only works with javascript enabled, so there is no no-js fallback by design.</p>
+          <p>if you're on tor browser, this page needs the security level below "safest" (which disables scripts). this is inherent to any end-to-end encrypted tool.</p>
+        </div>
+      </noscript>
+      <p class="subtext">upload a file, get a link, share it. files disappear on their own.</p>
+      <span id="no-logs-badge" class="no-logs-badge" hidden>no logs kept</span>
     <section id="state-upload" class="state">
       <div class="mode-toggle" id="mode-toggle" role="tablist">
         <button type="button" class="mode-btn active" id="mode-file-btn" role="tab" aria-selected="true">file</button>
@@ -61,19 +69,25 @@
       </div>
 
       <div class="passphrase-row" id="passphrase-row" hidden>
-        <input type="password" id="password-input" placeholder="passphrase (blank = auto-generate 5 words)">
+        <div class="password-input-wrap">
+          <input type="password" id="password-input" placeholder="passphrase (blank = auto-generate 5 words)">
+          <button type="button" id="password-input-toggle" class="password-toggle-btn" aria-label="show passphrase">show</button>
+        </div>
       </div>
 
       {% if upload_token_required %}
       <div class="passphrase-row">
-        <input type="password" id="upload-token-input" placeholder="upload token (required on this instance)" autocomplete="off">
+        <div class="password-input-wrap">
+          <input type="password" id="upload-token-input" placeholder="upload token (required on this instance)" autocomplete="off">
+          <button type="button" id="upload-token-toggle" class="password-toggle-btn" aria-label="show upload token">show</button>
+        </div>
       </div>
       {% endif %}
 
       <div class="upload-actions">
         <button class="btn btn-block" id="upload-btn" disabled>upload</button>
         <div class="upload-progress" id="upload-progress"><div class="upload-progress-fill" id="upload-progress-fill"></div></div>
-        <div class="download-status" id="upload-status"></div>
+        <div class="download-status" id="upload-status" aria-live="polite"></div>
       </div>
     </section>
 
@@ -89,7 +103,7 @@
       <div class="result-actions">
         <button class="link-secondary" id="delete-link-btn" type="button">delete this link</button>
       </div>
-      <p class="result-delete-status" id="result-delete-status"></p>
+      <p class="result-delete-status" id="result-delete-status" aria-live="polite"></p>
 
       <div class="qr-wrap" id="qr-wrap" hidden>
         <canvas id="qr-canvas" width="176" height="176"></canvas>
@@ -113,22 +127,30 @@
     <section class="info-blurb">
       <p>files are encrypted in your browser before upload. the server never sees your plaintext, keys, or passwords.</p>
       <ul>
-        <li>zero-knowledge encryption (AES-256-GCM)</li>
-        <li>encrypted filenames — server never knows what you're sharing</li>
-        <li>your link IS your key — anyone with the URL can decrypt (unless password-protected)</li>
-        <li>password mode uses 5 Diceware words (~64 bits entropy)</li>
-        <li>strip EXIF/GPS from images</li>
+        <li>zero-knowledge encryption (AES-256-GCM), performed entirely on the client</li>
+        <li>encrypted filenames — the server never knows what you're sharing</li>
+        <li>your link is your key: anyone with the URL can decrypt (unless password-protected), but the key is never sent to the server</li>
+        <li>password mode uses 5 Diceware words from a 7,776-word list (~64.5 bits of entropy) by default. not satisfied? use your own — password generation happens locally in your browser</li>
+        <li>metadata stripping is a BETA feature and is NOT perfect — it aims to remove EXIF/GPS from images. it's good opsec to strip metadata yourself before a file ever leaves your device to a potential adversary</li>
         <li>no accounts, no tracking, no logs</li>
-        <li>files auto-delete on expiry or after download</li>
-        <li>max file size: {{ max_file_size_display }}</li>
-        <li><a href="https://github.com/itsbt125/shred">free &amp; open source</a> — host your own instance with any config</li>
+        <li>files auto-delete on expiry or after their download limit</li>
+        <li>max file size (this instance): {{ max_file_size_display }}</li>
+        <li>max paste size (this instance): {{ max_paste_size_display }}</li>
+        <li>shred will always be <a href="https://github.com/itsbt125/shred">free &amp; open source</a> — host your own instance with any configuration</li>
       </ul>
     </section>
 
-    <a href="/status" class="nav-link">status</a>
-    <a href="/terms" class="nav-link">terms &amp; abuse policy</a>
-    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
   </main>
+
+  <footer class="site-footer">
+    <nav class="footer-links">
+      <a href="/status">status</a>
+      <span class="footer-sep">/</span>
+      <a href="/terms">acceptable use</a>
+      <span class="footer-sep">/</span>
+      <a href="https://github.com/itsbt125/shred">source code (github)</a>
+    </nav>
+  </footer>
 
 </div>
 

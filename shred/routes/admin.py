@@ -7,7 +7,13 @@ from flask import Blueprint, jsonify, request
 from shred import config
 from shred.counters import get_counters
 from shred.db import get_db
-from shred.security import get_current_rotating_token, hash_token, require_admin, token_gating_effective
+from shred.security import (
+    get_admin_auth_log,
+    get_current_rotating_token,
+    hash_token,
+    require_admin,
+    token_gating_effective,
+)
 from shred.storage import remove_blob, valid_id
 
 bp = Blueprint("admin", __name__)
@@ -116,6 +122,15 @@ def api_admin_rotate_token():
         "expires_in": max(0, expires - now),
         "rotation_interval": config.UPLOAD_TOKEN_ROTATION,
     })
+
+
+@bp.route("/api/admin/authlog")
+def api_admin_authlog():
+    guard = require_admin()
+    if guard:
+        return guard
+    limit = _parse_limit()
+    return jsonify({"log": get_admin_auth_log(limit)})
 
 
 @bp.route("/api/admin/files")

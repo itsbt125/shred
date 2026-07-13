@@ -32,6 +32,12 @@ MAX_FILE_SIZE = _env_int("MAX_SIZE_BYTES", 2 * 1024**3)
 MAX_CIPHERTEXT_SIZE = MAX_FILE_SIZE + 1024**2
 MAX_PASTE_SIZE = _env_int("MAX_PASTE_SIZE", 5 * 1024**2)
 
+# Client encrypts in fixed-size chunks (AES-GCM), appending one auth tag per chunk.
+# These MUST match CHUNK_SIZE and TAG_LENGTH in static/crypto.js so the server can
+# derive the expected ciphertext length from a declared plaintext size.
+CHUNK_SIZE = 1024**2
+GCM_TAG_SIZE = 16
+
 # Per-request body cap enforced by Flask/Werkzeug (MAX_CONTENT_LENGTH), distinct from
 # MAX_CIPHERTEXT_SIZE which caps cumulative bytes across a whole chunked upload session.
 MAX_UPLOAD_CHUNK_BYTES = _env_int("MAX_UPLOAD_CHUNK_BYTES", 2 * 1024**2)
@@ -42,6 +48,18 @@ UPLOAD_RATE_LIMIT = _env_int("UPLOAD_RATE_LIMIT", 10)
 DOWNLOAD_RATE_LIMIT = _env_int("DOWNLOAD_RATE_LIMIT", 30)
 REPORT_RATE_LIMIT = _env_int("REPORT_RATE_LIMIT", 5)
 RATE_WINDOW = _env_int("RATE_WINDOW", 60)
+
+# Per-upload_id chunk throttling (DB-backed, IP-less — shared across gunicorn workers).
+# Bounds total chunks per upload session over time; the per-IP concurrency cap below
+# is the complementary in-memory control that stops one client from hogging workers.
+CHUNK_RATE_LIMIT = _env_int("CHUNK_RATE_LIMIT", 1000)
+CHUNK_RATE_WINDOW = _env_int("CHUNK_RATE_WINDOW", 60)
+
+# Max simultaneous in-flight /api/upload/chunk requests per IP (in-memory, per worker).
+MAX_CONCURRENT_CHUNKS_PER_IP = _env_int("MAX_CONCURRENT_CHUNKS_PER_IP", 8)
+
+# Global ceiling on in-progress (pending) uploads; 0 = unlimited.
+MAX_PENDING_UPLOADS = _env_int("MAX_PENDING_UPLOADS", 0)
 
 MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 1024**3)
 
@@ -98,6 +116,19 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
 
 EXPOSE_DOWNLOAD_COUNT = os.environ.get("EXPOSE_DOWNLOAD_COUNT", "0").strip() == "1"
 
+# Operator-configurable report behavior. "suspend" (default) pauses the reported file
+# immediately, the same as before; "off" records the report for the operator but does
+# not auto-pause the file. The server never stores the reporter's IP either way.
+REPORT_ACTION = os.environ.get("REPORT_ACTION", "suspend").strip().lower()
+if REPORT_ACTION not in ("suspend", "off"):
+    REPORT_ACTION = "suspend"
+
+# Privacy-by-default: when on, the admin access log is kept only in memory (never
+# persisted) and no request IPs are written to disk anywhere. Rate limiting still works
+# because IPs are held in memory temporarily. Recommended for operators who want a
+# minimal disk footprint; someone who needs the persisted admin log just won't enable it.
+NO_LOGS = os.environ.get("NO_LOGS", "0").strip() == "1"
+
 
 def token_gating_enabled():
     return bool(UPLOAD_TOKEN) or UPLOAD_TOKEN_ROTATION > 0
@@ -144,4 +175,6 @@ def client_config():
         "upload_rate_per_minute": UPLOAD_RATE_LIMIT,
         "download_rate_per_minute": DOWNLOAD_RATE_LIMIT,
         "expose_download_count": EXPOSE_DOWNLOAD_COUNT,
+        "report_action": REPORT_ACTION,
+        "no_logs": NO_LOGS,
     }

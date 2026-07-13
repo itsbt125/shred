@@ -29,6 +29,12 @@ if (CONFIG.expiry_options) {
   });
 }
 
+// Surface the instance's privacy posture to uploaders when the operator opted into it.
+if (CONFIG.no_logs) {
+  var nlBadge = document.getElementById("no-logs-badge");
+  if (nlBadge) nlBadge.hidden = false;
+}
+
 var ID_RE = /^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/;
 var UPLOAD_ID_RE = /^[A-Za-z0-9_-]{16,64}$/; // group_id shape, not the 4-4-4 file-id pattern
 
@@ -375,6 +381,20 @@ function initUploadPage() {
       }
     });
   }
+
+  function wireVisibilityToggle(btnId, input, label) {
+    var btn = document.getElementById(btnId);
+    if (!btn || !input) return;
+    btn.addEventListener("click", function () {
+      var hidden = input.type === "password";
+      input.type = hidden ? "text" : "password";
+      btn.textContent = hidden ? "hide" : "show";
+      btn.setAttribute("aria-label", (hidden ? "hide " : "show ") + label);
+    });
+  }
+
+  wireVisibilityToggle("password-input-toggle", passwordInput, "passphrase");
+  wireVisibilityToggle("upload-token-toggle", uploadTokenInput, "upload token");
 
   function showResult(shareUrl, isProtected, pass, expiryOption, fileId, deleteToken) {
     shareLink.textContent = shareUrl;
@@ -1462,9 +1482,13 @@ function initReportLink() {
   var statusEl = document.getElementById("report-status");
 
   btn.addEventListener("click", function () {
+    var pauses = CONFIG.report_action !== "off";
     var reason = window.prompt(
       "Report this file as abusive or illegal?\n\n" +
-      "Downloads will be paused pending review. You can optionally describe the issue:"
+      (pauses
+        ? "Downloads will be paused pending review."
+        : "The operator will be notified; downloads are not automatically paused on this instance.") +
+      " You can optionally describe the issue:"
     );
     if (reason === null) return;
 
@@ -1479,10 +1503,16 @@ function initReportLink() {
       })
       .then(function (res) {
         if (res.ok) {
-          if (statusEl) statusEl.textContent = "reported — thank you. downloads are now paused pending review.";
+          if (statusEl) {
+            statusEl.textContent = pauses
+              ? "reported — thank you. downloads are now paused pending review."
+              : "reported — thank you. the operator has been notified.";
+          }
           btn.style.display = "none";
-          var dlBtn = document.getElementById("download-btn");
-          if (dlBtn) { dlBtn.setAttribute("disabled", "disabled"); dlBtn.style.display = "none"; }
+          if (pauses) {
+            var dlBtn = document.getElementById("download-btn");
+            if (dlBtn) { dlBtn.setAttribute("disabled", "disabled"); dlBtn.style.display = "none"; }
+          }
         } else {
           if (statusEl) statusEl.textContent = "error: " + ((res.body && res.body.error) || "could not report");
           btn.removeAttribute("disabled");

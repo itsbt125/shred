@@ -1,164 +1,181 @@
 # shred
 
-A free, open-source, zero-knowledge ephemeral file-sharing service. Files are
-encrypted in the browser before they're uploaded — the server never sees your
-file contents, filenames, keys, or passwords. Share a link, the recipient
-downloads and decrypts, and the file deletes itself on expiry or after download.
+Free, open-source, **zero-knowledge** ephemeral file sharing. Files are encrypted
+in the browser before upload — the server only ever stores ciphertext and never
+sees your contents, filenames, keys, or passphrases. Share a link, the recipient
+downloads and decrypts locally, and the file auto-deletes on expiry or download
+limit.
 
-## How it works
+## Features
 
-- **Client-side encryption.** Files are encrypted with AES-256-GCM in the
-  browser (chunked, 1 MiB per chunk). The random key is put in the URL fragment
-  (`#k=…`), which never reaches the server — the link *is* the key.
-- **Encrypted filenames.** The filename is encrypted under the same key, so the
-  server only ever stores opaque ciphertext.
-- **Password mode (optional).** Instead of putting the key in the link, derive it
-  from a passphrase (PBKDF2, 600k iterations, SHA-256) and wrap the content key
-  with AES-KW. Leave the passphrase blank to auto-generate a 5-word Diceware one
-  (~64 bits, from a CSPRNG).
-- **Metadata stripping.** Images are re-encoded via canvas to drop EXIF/GPS.
-- **Ephemeral by default.** Pick 1 hour / 1 day / 1 week, or burn-after-reading.
-  Expired files are cleaned up automatically; nothing is kept longer than its TTL.
-- **Multi-file & folder uploads.** Select several files (or a whole folder) for
-  one shared link (`/g/<id>`); recipients can download files individually or
-  grab everything as a single `.zip`, built and streamed client-side.
-- **Paste/text mode.** Share a block of text the same way a file is shared —
-  same encryption, expiry, and password options, no file required.
-- **Resumable uploads.** A dropped connection resumes from the last
-  acknowledged chunk instead of restarting the whole upload.
-- **Sender-side deletion.** A one-time delete link/token, shown once at
-  upload, lets you revoke a share early — no admin access needed.
-- **QR code.** Every share link gets a QR code for easy phone-to-phone
-  handoff.
-- **Named invite tokens.** Issue and revoke per-friend upload tokens from the
-  admin panel, independent of a shared static token.
+- **Client-side AES-256-GCM.** Chunked at 1 MiB/plaintext-chunk; the random key
+  lives in the URL fragment (`#k=…`) and never reaches the server — the link *is*
+  the key.
+- **Encrypted filenames.** Stored as opaque ciphertext under the same key.
+- **Password mode (optional).** Derive the key from a passphrase (PBKDF2-SHA256,
+  600k iterations) wrapping the content key with AES-KW, instead of putting it in
+  the link. Blank passphrase auto-generates 5 Diceware words from a 7,776-word
+  list (~64.5 bits), generated locally via CSPRNG.
+- **Metadata stripping (BETA, imperfect).** Re-encodes images via canvas to drop
+  EXIF/GPS. Good practice, not a guarantee — strip sensitive metadata yourself
+  before a file leaves your device.
+- **Ephemeral.** 5 min → 1 week, or burn-after-reading. A background thread reaps
+  expired files; reported files are paused but still auto-delete at their expiry.
+- **Multi-file / folder.** One link (`/g/<id>`); recipients grab files
+  individually or as a single `.zip` built and streamed client-side.
+- **Paste mode.** Share text with the same encryption/expiry/password options.
+- **Resumable uploads.** A dropped connection resumes from the last acked chunk.
+- **Sender-side deletion.** One-time delete token shown at upload; revoke early
+  without admin access.
+- **QR codes, named invite tokens, admin panel.** See below.
+
+## Crypto summary
+
+| | |
+| --- | --- |
+| Content encryption | AES-256-GCM, 1 MiB chunks, per-file random 96-bit base IV + per-chunk counter |
+| Key delivery | URL fragment (`#k=`), never sent to server |
+| Password mode | PBKDF2-SHA256 (600k) → AES-KW wraps the content key |
+| Auto passphrase | 5 Diceware words, 7,776-word list, ~64.5 bits, CSPRNG |
+| Filenames | encrypted under the content key |
+
+All encryption/decryption is in-browser via the Web Crypto API. The server is a
+dumb ciphertext store.
 
 ## Stack
 
-Flask + vanilla JS, SQLite for metadata, files sharded on disk. Runs under
+Flask + vanilla JS, SQLite for metadata, blobs sharded on disk. Runs under
 gunicorn behind nginx or Caddy. No accounts, no third-party services, no
-client-side dependencies to load.
+client-side dependencies to fetch.
 
-## Running it
+## Quick start (dev)
 
 ```sh
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt 
-cp .env.example .env       # edit as needed, please read!!
-python server.py            # dev server on http://127.0.0.1:5000
+pip install -r requirements.txt
+cp .env.example .env      # read it — the defaults matter
+python server.py          # http://127.0.0.1:5000
 ```
 
-For production, run under gunicorn behind a TLS-terminating reverse proxy:
+## Production
 
 ```sh
-gunicorn --workers 2 --worker-class gthread --threads 4 --bind 127.0.0.1:8000 --timeout 3600 server:app
+gunicorn --workers 2 --worker-class gthread --threads 4 \
+         --bind 127.0.0.1:8000 --timeout 3600 server:app
 ```
 
-Example `nginx`, `Caddy`, and `systemd` configs are in [`deploy/`](deploy/). Set
-`TRUSTED_PROXY_COUNT=1` so the app sees the real client IP behind the proxy.
+Run behind a TLS-terminating reverse proxy. Example `nginx`, `Caddy`, and
+`systemd` configs are in [`deploy/`](deploy/) — they terminate TLS, set **HSTS**,
+disable access logs, and preserve upload streaming. Set `TRUSTED_PROXY_COUNT=1`
+so the app sees real client IPs.
 
-### systemd
-
-Drop [`deploy/shred.service`](deploy/shred.service) into `/etc/systemd/system/`,
-adjust the `WorkingDirectory` and `EnvironmentFile` paths, then:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now shred
-```
+**systemd:** drop [`deploy/shred.service`](deploy/shred.service) into
+`/etc/systemd/system/`, fix the `WorkingDirectory`/`EnvironmentFile` paths, then
+`sudo systemctl enable --now shred`.
 
 ## Configuration
 
-All settings are environment variables (loaded from `.env`); see
-[`.env.example`](.env.example) for the full list. The ones worth knowing:
+All settings are environment variables loaded from `.env`;
+[`.env.example`](.env.example) has the full annotated list. Key ones:
 
-| Variable | Purpose |
-| --- | --- |
-| `STORAGE_DIR` | Where the database and uploads live (default `data`). |
-| `MAX_SIZE_BYTES` | Per-file size cap (default 2 GB). |
-| `MAX_PASTE_SIZE` | Cap on a pasted text share (default 5 MB). |
-| `MIN_FREE_DISK_BYTES` | Stop accepting uploads below this much free space (default 1 GB). |
-| `TRUSTED_PROXY_COUNT` | Trusted reverse-proxy hops. Set to `1` behind nginx/Caddy. |
-| `ABUSE_CONTACT` | Address shown on the `/terms` page. |
-| `UPLOAD_TOKEN` | Static secret required to upload. |
-| `UPLOAD_IP_ALLOWLIST` | Comma-separated IPs/CIDRs allowed to upload. |
-| `UPLOAD_TOKEN_ROTATION` | Rotate the upload token every N seconds (0 = off). |
-| `ADMIN_TOKEN` | Secret for the admin panel and token API. |
-| `EXPOSE_DOWNLOAD_COUNT` | Show each file's download count on its download page (default off). |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `STORAGE_DIR` | `data` | Database + uploads location. |
+| `MAX_SIZE_BYTES` | 2 GB | Per-file size cap. |
+| `MAX_PASTE_SIZE` | 5 MB | Text-paste cap. |
+| `MAX_EXPIRY_SECONDS` | 30 d | Longest expiry a client may pick. |
+| `MIN_FREE_DISK_BYTES` | 1 GB | Refuse uploads below this free space. |
+| `TRUSTED_PROXY_COUNT` | 0 | Reverse-proxy hops to trust for client IP. Set `1` behind nginx/Caddy. |
+| `NO_LOGS` | 0 | `1` = keep the admin access log in memory only and never write any request IP to disk. |
+| `REPORT_ACTION` | `suspend` | `suspend` pauses reported files; `off` just records the report. |
+| `EXPOSE_DOWNLOAD_COUNT` | 0 | Show per-file download count on its page. |
+| `ABUSE_CONTACT` | — | Address shown on `/terms`. |
+| `ADMIN_TOKEN` | auto | Secret for `/admin` + token API (auto-generated if blank). |
+
+Rate limiting / anti-abuse (all per minute unless noted):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `UPLOAD_RATE_LIMIT` / `DOWNLOAD_RATE_LIMIT` | 10 / 30 | Per-IP (in-memory). |
+| `REPORT_RATE_LIMIT` / `ADMIN_RATE_LIMIT` | 5 / 30 | Per-IP (in-memory). |
+| `CHUNK_RATE_LIMIT` / `CHUNK_RATE_WINDOW` | 1000 / 60 s | Per-upload chunk throttle (DB-backed, shared across workers). |
+| `MAX_CONCURRENT_CHUNKS_PER_IP` | 8 | Simultaneous in-flight chunk requests per IP. |
+| `MAX_PENDING_UPLOADS` | 0 | Global cap on in-progress uploads (0 = unlimited). |
+| `CLEANUP_INTERVAL` / `PENDING_UPLOAD_TTL` | 300 / 3600 s | Reap cadence / abandoned-upload TTL. |
+| `REPORTS_RETENTION_SECONDS` | 90 d | Report history retention (0 = forever). |
 
 ## Upload gating
 
-By default anyone can upload. For a private instance (e.g. sharing with friends),
-gate uploads — this is the single biggest thing that reduces abuse exposure.
-Downloads are never gated, since the link itself is the decryption key.
+Anyone can upload by default. For a private instance, gate uploads — the single
+biggest lever on abuse exposure. **Downloads are never gated** (the link is the
+key).
 
-- **Static token** — set `UPLOAD_TOKEN`; the upload page then asks for it.
-- **IP allowlist** — set `UPLOAD_IP_ALLOWLIST`.
-- **Rotating tokens** — set `UPLOAD_TOKEN_ROTATION` to mint a fresh token every N
-  seconds; a leaked token stops working within 2×N. Fetch the current one from
-  the admin panel or `GET /api/admin/token`.
-- **Named invite tokens** — create individually-revocable tokens per person
-  from the admin panel, without a shared `UPLOAD_TOKEN`. Creating one turns
-  gating on for the whole deployment; revoking your last invite doesn't
-  silently reopen uploads.
+- **Static token** — `UPLOAD_TOKEN`; the upload page then asks for it.
+- **IP allowlist** — `UPLOAD_IP_ALLOWLIST` (comma-separated IPs/CIDRs).
+- **Rotating token** — `UPLOAD_TOKEN_ROTATION=N`; a fresh token every N seconds,
+  leaked ones die within 2×N. Fetch the current one from the admin panel or
+  `GET /api/admin/token`.
+- **Named invite tokens** — per-person, individually revocable, from the admin
+  panel. Creating one turns gating on for the whole deployment; revoking your
+  last invite won't silently reopen uploads.
 
-## Admin panel
+## Admin & abuse
 
-`/admin`, unlocked with `ADMIN_TOKEN`. Shows an overview (uptime, storage, disk
-usage, counts), the current upload token (reveal / rotate), named invite
-tokens (create / revoke), the list of stored files (metadata only — never
-plaintext), and the abuse-report queue. From here you can pause, restore, or
-delete any file.
+`/admin` (unlock with `ADMIN_TOKEN`) shows overview stats, the rotating token
+(reveal/rotate), invite tokens (create/revoke), stored files (metadata only), the
+report queue, and the in-memory admin access log. Pause, restore, or delete any
+file from there.
 
-## Abuse handling
+Every download page has a **report** button, and this behavior — like most of
+shred — is operator-configurable (`REPORT_ACTION`).
 
-Every file's download page has a **report** button. Reporting *pauses* the file
-immediately — downloads are blocked and the page shows "reported, pending review"
-— without the operator ever decrypting anything. Reported files land in the admin
-queue, where you review them and either restore or delete. Takedown and
-law-enforcement contact is on the `/terms` page.
+What reporting actually does: because the server holds only ciphertext, the
+operator still cannot see *what* was reported. Reporting is a blind moderation
+signal, not content inspection. With the default `REPORT_ACTION=suspend`, a
+report flips the file to a paused state so it stops serving (HTTP 451) and lands
+in the admin queue — the operator can then delete it or restore it, all without
+ever decrypting anything. It exists so anyone holding a link can pull a suspected-
+abusive share offline immediately and give the operator a takedown path that
+respects the zero-knowledge model, rather than proving the file's contents. With
+`REPORT_ACTION=off`, a report is only recorded (no auto-pause). Either way the
+reporter's IP is never stored.
+
+Takedown / law-enforcement contact is on `/terms`. That page is the project's
+*default* policy — like the report behavior, expiries, gating, and limits, it's
+just a starting point each operator sets and is responsible for on their own
+instance.
+
+## Privacy & security
+
+- Zero-knowledge by design: the server cannot read, search, or recover contents.
+- `NO_LOGS=1` keeps client IPs out of disk entirely (rate limiting stays in
+  memory); reporter IPs are never stored regardless. This is aimed at high-risk
+  or high-sensitivity deployments — instances serving at-risk users
+  (journalists, activists, whistleblowers), operators in hostile jurisdictions,
+  or anyone who simply wants the strongest privacy posture and minimal forensic
+  footprint. The trade-off is less operational visibility for debugging and
+  abuse response, so leave it off if you need those.
+- App sets a strict CSP (no inline scripts/styles), `nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, COOP/CORP, and HSTS
+  over TLS; the `deploy/` proxies add HSTS too.
+- File IDs are pattern-validated and paths contained to the upload dir — no
+  traversal.
+- Client-side encryption protects *users'* privacy; it does **not** shield the
+  operator from legal responsibility. Running a public instance? Read `/terms`,
+  set a real `ABUSE_CONTACT`, and know your jurisdiction's obligations.
 
 ## Wiping data
 
-To permanently delete all uploaded files and the database:
-
 ```sh
-./scripts/wipe.sh          # prompts for confirmation
+./scripts/wipe.sh          # prompts
 ./scripts/wipe.sh --yes    # no prompt
 ```
 
-Your `.env` and `ADMIN_TOKEN` are left alone; an empty database is recreated on
-the next start.
-
-## Security notes
-
-- Everything sensitive is encrypted client-side; the server is zero-knowledge by
-  design. It cannot read, search, or recover file contents.
-- Strict CSP (no inline scripts/styles), `COOP`/`CORP`, `nosniff`,
-  `X-Frame-Options: DENY`, and HSTS when served over TLS.
-- File IDs are validated against a strict pattern and paths are contained to the
-  upload directory, so IDs can't be used for traversal.
-- Client-side encryption protects your users' privacy; it does not shield the
-  operator from legal responsibility for hosted content. If you run a public
-  instance, read `/terms`, set a real `ABUSE_CONTACT`, and understand your
-  jurisdiction's obligations.
+Deletes all uploads and the database (recreated empty on next start); leaves
+`.env` / `ADMIN_TOKEN` alone.
 
 ## License
 
-Licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See
-[`LICENSE`](LICENSE) for the full text.
-
-    Copyright (C) 2026 btea.dev
-
-    This program is free software: you can redistribute it and/or modify it
-    under the terms of the GNU Affero General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or (at your
-    option) any later version.
-
-    This program is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
-    for more details.
-
-    You should have received a copy of the GNU Affero General Public License
-    along with this program. If not, see <https://www.gnu.org/licenses/>.
+**GNU AGPL-3.0.** See [`LICENSE`](LICENSE). Copyright (C) 2026 btea.dev.
+</content>
+</invoke>

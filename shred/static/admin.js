@@ -205,7 +205,6 @@
         fmtAgo(rep.created, now) + status,
         rep.file_id,
         rep.reason || "—",
-        rep.ip || "—",
       ]);
 
       var actionTd = document.createElement("td");
@@ -432,6 +431,7 @@
       adminFetch("/api/admin/overview").then(function (r) { return r.json(); }),
       loadFiles(false),
       adminFetch("/api/admin/reports").then(function (r) { return r.json(); }),
+      adminFetch("/api/admin/authlog").then(function (r) { return r.json(); }),
       refreshInvites(),
     ]).then(function (results) {
       document.getElementById("admin-refresh-error").textContent = "";
@@ -440,8 +440,27 @@
       reportsState.total = results[2].total || 0;
       reportsState.offset = reports.length;
       renderReports(reports, Math.floor(Date.now() / 1000), false);
+      renderAuthLog(results[3].log || [], Math.floor(Date.now() / 1000));
     }).catch(function () {
       document.getElementById("admin-refresh-error").textContent = "could not refresh — network error";
+    });
+  }
+
+  function renderAuthLog(list, now) {
+    var body = document.getElementById("authlog-body");
+    var empty = document.getElementById("authlog-empty");
+    body.textContent = "";
+    empty.hidden = list.length > 0;
+    list.forEach(function (entry) {
+      var tr = document.createElement("tr");
+      var result = entry.success ? "allowed" : "denied";
+      appendCells(tr, [
+        fmtAgo(entry.created, now),
+        result,
+        entry.reason || "—",
+      ]);
+      if (!entry.success) tr.classList.add("row-suspended");
+      body.appendChild(tr);
     });
   }
 

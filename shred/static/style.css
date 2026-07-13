@@ -160,6 +160,7 @@ h1 {
 
 .dropzone:hover,
 .dropzone.dragover {
+  border-style: solid;
   border-color: var(--text);
 }
 
@@ -225,7 +226,7 @@ h1 {
 /* passphrase row (revealed when password is checked) */
 
 .passphrase-row {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .passphrase-row input {
@@ -276,6 +277,14 @@ h1 {
   margin-top: 18px;
   padding: 12px 18px;
   font-size: 16px;
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.btn-block:hover {
+  background: none;
+  color: var(--text);
 }
 
 .btn[disabled] {
@@ -339,7 +348,8 @@ h1 {
   flex: 1;
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 15px;
+  font-family: monospace;
+  font-size: 14px;
   padding: 10px 12px;
   overflow-x: auto;
   white-space: nowrap;
@@ -365,7 +375,8 @@ h1 {
 .result-passphrase .rp-value {
   flex: 1;
   color: var(--text);
-  font-size: 15px;
+  font-family: monospace;
+  font-size: 14px;
   padding: 8px 0;
   overflow-x: auto;
   white-space: nowrap;
@@ -451,6 +462,24 @@ button.link-secondary:hover {
   text-align: center;
 }
 
+.trust-note {
+  margin: 18px auto 0;
+  max-width: 420px;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.no-logs-badge {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
 .file-name {
   color: var(--text);
   font-size: 17px;
@@ -527,19 +556,6 @@ button.link-secondary:hover {
   border-color: var(--text);
 }
 
-.download-success {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-  color: var(--text);
-  font-size: 14px;
-  display: none;
-}
-
-.download-success.show {
-  display: block;
-}
-
 /* error / expired page */
 
 .error-panel {
@@ -569,6 +585,37 @@ button.link-secondary:hover {
 
 /* condensed info on index page */
 
+.noscript-notice {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text);
+  padding: 16px 18px;
+  margin-bottom: 24px;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.noscript-notice strong {
+  display: block;
+  color: var(--text);
+  margin-bottom: 8px;
+  text-transform: lowercase;
+}
+
+.noscript-notice p {
+  margin: 0 0 10px;
+}
+
+.noscript-notice p:last-child {
+  margin-bottom: 0;
+}
+
+.noscript-notice code {
+  font-family: monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+
 .info-blurb {
   margin-top: 40px;
   padding-top: 24px;
@@ -591,7 +638,10 @@ button.link-secondary:hover {
 
 .info-blurb ul li {
   color: var(--dim);
-  margin-bottom: 4px;
+  margin-bottom: 10px;
+  line-height: 1.65;
+  padding-left: 1.1em;
+  text-indent: -1.1em;
 }
 
 .info-blurb ul li::before {
@@ -658,18 +708,39 @@ button.link-secondary:hover {
   font-size: 16px;
 }
 
-/* status nav link */
+/* footer */
 
-.nav-link {
-  display: inline-block;
-  margin-top: 24px;
+.site-footer {
+  margin-top: 40px;
+  padding: 18px 0 28px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px 20px;
   font-size: 13px;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.footer-links a {
   color: var(--faint);
   text-decoration: none;
 }
 
-.nav-link:hover {
+.footer-links a:hover {
   color: var(--text);
+}
+
+.footer-sep {
+  color: var(--border);
+  user-select: none;
 }
 
 /* legal / terms */
@@ -708,14 +779,6 @@ button.link-secondary:hover {
 
 .legal a {
   color: var(--text);
-}
-
-.legal .disclaimer {
-  color: var(--faint);
-  font-size: 12px;
-  border-top: 1px solid var(--line);
-  margin-top: 28px;
-  padding-top: 16px;
 }
 
 /* admin panel */

@@ -25,6 +25,7 @@ def index():
         "index.html",
         upload_token_required=token_gating_effective(),
         max_file_size_display=config.format_bytes(config.MAX_FILE_SIZE),
+        max_paste_size_display=config.format_bytes(config.MAX_PASTE_SIZE),
         expiry_options=config.EXPIRY_OPTIONS,
         config_json=_embed_config(),
     )

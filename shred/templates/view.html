@@ -19,9 +19,17 @@
   </header>
 
   <main>
+    <noscript>
+      <div class="noscript-notice">
+        <strong>javascript is required.</strong>
+        <p>this file is decrypted entirely in your browser — the decryption key lives in the link's <code>#fragment</code> and is never sent to the server. without javascript there is no way to read it.</p>
+        <p>if you're on tor browser, lower the security level below "safest" (which disables scripts). this is inherent to any end-to-end encrypted tool.</p>
+      </div>
+    </noscript>
     <div class="file-card">
       <div class="file-name" id="file-name">loading...</div>
       <div class="file-meta" id="file-meta"></div>
+      <div class="trust-note" id="trust-note">decrypted in your browser — the server only ever stores ciphertext.</div>
 
       <div class="paste-view" id="paste-view" hidden>
         <textarea id="paste-content" class="paste-textarea" rows="10" readonly></textarea>
@@ -38,18 +46,26 @@
 
       <button class="btn btn-block" id="download-btn" disabled>download</button>
       <div class="upload-progress" id="download-progress"><div class="upload-progress-fill" id="download-progress-fill"></div></div>
-      <div class="download-status" id="download-status"></div>
+      <div class="download-status" id="download-status" aria-live="polite"></div>
 
       <div class="report-row">
         <button type="button" id="report-btn" class="link-report">report abuse</button>
-        <span class="report-status" id="report-status"></span>
+        <span class="report-status" id="report-status" aria-live="polite"></span>
       </div>
     </div>
 
     <a href="/" class="link-secondary">&larr; upload your own file</a>
-    <a href="/terms" class="nav-link">terms &amp; abuse policy</a>
-    <a href="https://github.com/itsbt125/shred" class="nav-link">source code</a>
   </main>
+
+  <footer class="site-footer">
+    <nav class="footer-links">
+      <a href="/">home</a>
+      <span class="footer-sep">/</span>
+      <a href="/terms">acceptable use</a>
+      <span class="footer-sep">/</span>
+      <a href="https://github.com/itsbt125/shred">source code (github)</a>
+    </nav>
+  </footer>
 
 </div>
 
