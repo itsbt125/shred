@@ -1,3 +1,4 @@
+import os
 import secrets
 import sqlite3
 
@@ -6,10 +7,28 @@ from flask import g
 from shred import config
 
 
+def _restrict_permissions():
+    """The DB holds live secrets (rotating upload tokens, an auto-generated admin
+    token, invite/delete-token hashes), so it and its directories must not be
+    readable by other local users. Blobs are already created 0600; this covers
+    the DB (and its -wal/-shm, which sqlite modes after the DB file) and fixes
+    up directories from installs created before this hardening."""
+    try:
+        os.chmod(config.DATA_DIR, 0o700)
+        os.chmod(config.UPLOAD_DIR, 0o700)
+    except OSError:
+        pass
+    try:
+        os.chmod(config.DB_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def init_db():
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(config.DB_PATH))
+    _restrict_permissions()
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode = WAL")
     db.execute("PRAGMA foreign_keys = ON")

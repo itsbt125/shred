@@ -1,4 +1,5 @@
 import logging
+import os
 
 from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -14,17 +15,6 @@ __version__ = "1.0.0"
 _bootstrapped = False
 
 
-class _StripServerHeader:
-    def __init__(self, app):
-        self.app = app
-
-    def __call__(self, environ, start_response):
-        def _start_response(status, headers, *args):
-            headers = [(k, v) for k, v in headers if k.lower() != "server"]
-            return start_response(status, headers, *args)
-        return self.app(environ, _start_response)
-
-
 def _add_security_headers(response):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
@@ -32,7 +22,10 @@ def _add_security_headers(response):
         "style-src 'self'; "
         "font-src 'self'; "
         "connect-src 'self'; "
-        "img-src 'self' data:"
+        "img-src 'self' data:; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -72,6 +65,9 @@ def _handle_500(e):
 def create_app(bootstrap=True):
     global _bootstrapped
 
+    # Everything the app writes (DB, blobs, lock files) is private to this user.
+    os.umask(0o077)
+
     app = Flask(
         __name__,
         template_folder=str(config.TEMPLATES_DIR),
@@ -97,8 +93,9 @@ def create_app(bootstrap=True):
             flush=True,
         )
 
-    app.wsgi_app = _StripServerHeader(app.wsgi_app)
-
+    # NOTE: there is deliberately no Server-header stripping middleware — it can't
+    # work. Werkzeug's dev server and gunicorn both emit the Server header at the
+    # HTTP layer below WSGI, so the deploy/ proxy configs hide it instead.
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
     app.teardown_appcontext(close_db)

@@ -87,9 +87,33 @@ _DEFAULT_EXPIRY_OPTIONS = [
     {"label": "1 week", "seconds": 604800},
     {"label": "burn after reading", "seconds": 0},
 ]
+def _validate_expiry_options(raw):
+    """Drops malformed entries (and options beyond MAX_EXPIRY_SECONDS, which the
+    server would reject at upload time anyway) so a bad env value can't 500 the
+    index page. Returns None if nothing usable remains."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for opt in raw:
+        if not isinstance(opt, dict):
+            continue
+        try:
+            label = str(opt["label"])
+            seconds = int(opt["seconds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not label or seconds < 0 or seconds > MAX_EXPIRY_SECONDS:
+            continue
+        entry = {"label": label, "seconds": seconds}
+        if opt.get("default"):
+            entry["default"] = True
+        out.append(entry)
+    return out or None
+
+
 try:
-    EXPIRY_OPTIONS = json.loads(os.environ.get("EXPIRY_OPTIONS", "null"))
-    if not isinstance(EXPIRY_OPTIONS, list):
+    EXPIRY_OPTIONS = _validate_expiry_options(json.loads(os.environ.get("EXPIRY_OPTIONS", "null")))
+    if EXPIRY_OPTIONS is None:
         EXPIRY_OPTIONS = _DEFAULT_EXPIRY_OPTIONS
 except (json.JSONDecodeError, TypeError):
     EXPIRY_OPTIONS = _DEFAULT_EXPIRY_OPTIONS

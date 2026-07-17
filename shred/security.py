@@ -113,6 +113,10 @@ def get_admin_auth_log(limit=100):
 
 
 def get_current_rotating_token(db):
+    # Rotating tokens are stored raw (unlike invite/delete tokens, which are
+    # hashed) because the admin must be able to retrieve and reveal the current
+    # one. Exposure is bounded by the token's ≤2×R lifetime and by the database
+    # file being 0600 (see db._restrict_permissions).
     now = int(time.time())
     R = config.UPLOAD_TOKEN_ROTATION
     window_start = (now // R) * R
