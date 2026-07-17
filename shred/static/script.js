@@ -1497,7 +1497,11 @@ function initReportLink() {
     form.append("file_id", fileId);
     form.append("reason", reason || "");
 
-    fetch("/api/report", { method: "POST", body: form })
+    fetch("/api/report", {
+      method: "POST",
+      body: form,
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    })
       .then(function (r) {
         return r.json().then(function (j) { return { ok: r.ok, body: j }; });
       })

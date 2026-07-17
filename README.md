@@ -46,7 +46,8 @@ dumb ciphertext store.
 
 Flask + vanilla JS, SQLite for metadata, blobs sharded on disk. Runs under
 gunicorn behind nginx or Caddy. No accounts, no third-party services, no
-client-side dependencies to fetch.
+client-side dependencies to fetch. (`shred/static/fonts/` ships empty — drop
+the Redaction `.woff` files in or the serif fallback is used.)
 
 ## Quick start (dev)
 
@@ -90,7 +91,7 @@ All settings are environment variables loaded from `.env`;
 | `REPORT_ACTION` | `suspend` | `suspend` pauses reported files; `off` just records the report. |
 | `EXPOSE_DOWNLOAD_COUNT` | 0 | Show per-file download count on its page. |
 | `ABUSE_CONTACT` | — | Address shown on `/terms`. |
-| `ADMIN_TOKEN` | auto | Secret for `/admin` + token API (auto-generated if blank). |
+| `ADMIN_TOKEN` | auto | Secret for `/admin` + token API. If blank while rotation is on, one is auto-generated and stored in the DB key-value store — never printed or logged. |
 
 Rate limiting / anti-abuse (all per minute unless noted):
 
@@ -160,6 +161,10 @@ instance.
   over TLS; the `deploy/` proxies add HSTS too.
 - File IDs are pattern-validated and paths contained to the upload dir — no
   traversal.
+- The data dir is `0700` and the database `0600` (it holds live tokens); blobs
+  are written `0600`. The app sets `umask(077)` at startup.
+- The `Server` response header is hidden by the `deploy/` proxy configs (the
+  WSGI server emits it below the app layer, so the app can't strip it).
 - Client-side encryption protects *users'* privacy; it does **not** shield the
   operator from legal responsibility. Running a public instance? Read `/terms`,
   set a real `ABUSE_CONTACT`, and know your jurisdiction's obligations.

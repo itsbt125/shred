@@ -20,6 +20,9 @@ shred.example.com {
 	# HTTPS-only and you intend to submit to the preload list.
 	header Strict-Transport-Security "max-age=63072000; includeSubDomains"
 
+	# gunicorn emits "Server: gunicorn" below the WSGI layer — hide it here.
+	header -Server
+
 	# /admin is already gated by ADMIN_TOKEN. Uncomment to also lock it to an IP/VPN.
 	# @admin_blocked {
 	#     path /admin /api/admin/*
