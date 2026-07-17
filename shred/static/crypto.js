@@ -99,13 +99,15 @@ async function wrapContentKey(kek, contentKey) {
 }
 
 async function unwrapContentKey(kek, wrappedKeyBytes) {
+  // extractable: false — in password mode the content key never leaves memory
+  // (only the link-fragment path needs exportKey, and that uses importKey instead).
   return crypto.subtle.unwrapKey(
     "raw",
     wrappedKeyBytes,
     kek,
     "AES-KW",
     { name: "AES-GCM", length: 256 },
-    true,
+    false,
     ["encrypt", "decrypt"]
   );
 }
@@ -449,8 +451,17 @@ async function downloadGroupAsZip(files, filenames, contentKey, zipName, onProgr
   }
 
   const usedNames = Object.create(null);
+  // Filenames are uploader-controlled: strip path separators, dot-segments and
+  // control chars so a hostile name can't plant zip-slip entries ("../../x")
+  // in the client-built archive when the recipient extracts it.
+  function safeZipName(name) {
+    let n = String(name == null ? "" : name);
+    n = n.replace(/[\\/]/g, "_").replace(/[\x00-\x1f\x7f]/g, "_");
+    if (n === "" || n === "." || n === "..") n = "file";
+    return n;
+  }
   function uniqueName(name, index) {
-    let n = name || ("file-" + (index + 1));
+    let n = name ? safeZipName(name) : ("file-" + (index + 1));
     if (usedNames[n]) {
       const dot = n.lastIndexOf(".");
       const base = dot > 0 ? n.slice(0, dot) : n;

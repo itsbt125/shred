@@ -61,6 +61,14 @@ def _release_chunk_ip(ip):
             _chunk_ip_count[ip] = n - 1
 
 
+def _expected_ciphertext_size(plaintext_size):
+    """Ciphertext length for a declared plaintext size: one GCM tag per
+    CHUNK_SIZE chunk (min one chunk, even for an empty file). Shared by the
+    chunk handler (cap) and finish (verification) so the formula can't drift."""
+    chunk_count = math.ceil(plaintext_size / config.CHUNK_SIZE) if plaintext_size > 0 else 1
+    return plaintext_size + chunk_count * config.GCM_TAG_SIZE
+
+
 def _validate_upload_metadata(form):
     """Returns (metadata_dict, None) or (None, (error_response, status))."""
     iv_b64 = form.get("iv")
@@ -268,6 +276,18 @@ def api_upload_chunk():
                 db.execute("ROLLBACK")
                 return jsonify({"error": "unexpected chunk index"}), 409
 
+            # Cap appends at the ciphertext length implied by the declared plaintext
+            # size — not the global MAX_CIPHERTEXT_SIZE — so a session that declares
+            # 1 KB can't stream gigabytes into its partial file.
+            expected = _expected_ciphertext_size(row["size"])
+
+            try:
+                if shutil.disk_usage(str(config.UPLOAD_DIR)).free < config.MIN_FREE_DISK_BYTES:
+                    db.execute("ROLLBACK")
+                    return jsonify({"error": "server storage full, try again later"}), 507
+            except OSError:
+                pass
+
             # Must truncate the partial file back to bytes_received on any failed
             # append, or its on-disk length drifts and later chunks land at the wrong offset.
             base_len = row["bytes_received"]
@@ -286,7 +306,7 @@ def api_upload_chunk():
                         data = chunk_file.stream.read(65536)
                         if not data:
                             break
-                        if base_len + written + len(data) > config.MAX_CIPHERTEXT_SIZE:
+                        if base_len + written + len(data) > expected:
                             f.close()
                             _truncate_back()
                             db.execute("ROLLBACK")
@@ -341,9 +361,7 @@ def api_upload_finish():
     # GCM_TAG_SIZE auth tag to each, so the on-disk ciphertext is larger than the
     # declared plaintext by exactly one tag per chunk (min one chunk, even for an
     # empty file). Comparing raw bytes to plaintext size would fail every upload.
-    plaintext_size = row["size"]
-    chunk_count = math.ceil(plaintext_size / config.CHUNK_SIZE) if plaintext_size > 0 else 1
-    expected_ciphertext = plaintext_size + chunk_count * config.GCM_TAG_SIZE
+    expected_ciphertext = _expected_ciphertext_size(row["size"])
     if row["bytes_received"] != expected_ciphertext:
         db.execute("DELETE FROM pending_uploads WHERE upload_id = ?", (upload_id,))
         db.commit()
@@ -419,6 +437,9 @@ def api_upload_finish():
 def api_upload_status(upload_id):
     if not valid_upload_id(upload_id):
         return jsonify({"error": "invalid upload_id"}), 400
+    ip = request.remote_addr or "unknown"
+    if not rate_limit_mem("status:" + ip, config.DOWNLOAD_RATE_LIMIT, config.RATE_WINDOW):
+        return jsonify({"error": "rate limit exceeded"}), 429
     db = get_db()
     row = db.execute(
         "SELECT next_chunk_index, bytes_received FROM pending_uploads WHERE upload_id = ?", (upload_id,)
@@ -546,49 +567,69 @@ def api_file(file_id):
         return jsonify({"error": "rate limit exceeded"}), 429
 
     db = get_db()
-
-    db.execute("BEGIN IMMEDIATE")
-    try:
-        row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
-        if not row:
-            db.execute("ROLLBACK")
-            return jsonify({"error": "not found"}), 410
-
-        if row["expiry"] < int(time.time()):
-            remove_blob(file_id)
-            db.execute("DELETE FROM files WHERE id = ?", (file_id,))
-            db.execute("COMMIT")
-            return jsonify({"error": "expired"}), 410
-
-        if row["suspended"]:
-            db.execute("ROLLBACK")
-            return jsonify({"error": "suspended"}), 451
-
-        max_dl = row["max_downloads"]
-        current_dl = row["downloads"]
-        if max_dl > 0 and current_dl >= max_dl:
-            db.execute("ROLLBACK")
-            return jsonify({"error": "expired"}), 410
-
-        new_dl = current_dl + 1
-        delete_after = max_dl > 0 and new_dl >= max_dl
-
-        if delete_after:
-            db.execute("DELETE FROM files WHERE id = ?", (file_id,))
-        else:
-            db.execute("UPDATE files SET downloads = ? WHERE id = ?", (new_dl, file_id))
-
-        db.execute("COMMIT")
-    except Exception:
-        try:
-            db.execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
-
     s_path = storage_path(file_id)
-    if not safe_storage_path(s_path) or not s_path.exists():
-        return jsonify({"error": "not found"}), 410
+    delete_after = False
+
+    if request.method == "HEAD":
+        # HEAD must be side-effect free (no counter, no deletion). Otherwise any
+        # link checker or `wget --spider` could burn a burn-after-reading file,
+        # and the blob would be orphaned since the stream generator never runs.
+        row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+        if not row or row["expiry"] < int(time.time()):
+            return jsonify({"error": "not found"}), 410
+        if row["suspended"]:
+            return jsonify({"error": "suspended"}), 451
+        if row["max_downloads"] > 0 and row["downloads"] >= row["max_downloads"]:
+            return jsonify({"error": "expired"}), 410
+        if not safe_storage_path(s_path) or not s_path.exists():
+            return jsonify({"error": "not found"}), 410
+    else:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+            if not row:
+                db.execute("ROLLBACK")
+                return jsonify({"error": "not found"}), 410
+
+            if row["expiry"] < int(time.time()):
+                remove_blob(file_id)
+                db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                db.execute("COMMIT")
+                return jsonify({"error": "expired"}), 410
+
+            if row["suspended"]:
+                db.execute("ROLLBACK")
+                return jsonify({"error": "suspended"}), 451
+
+            max_dl = row["max_downloads"]
+            current_dl = row["downloads"]
+            if max_dl > 0 and current_dl >= max_dl:
+                db.execute("ROLLBACK")
+                return jsonify({"error": "expired"}), 410
+
+            if not safe_storage_path(s_path) or not s_path.exists():
+                # Row without a blob — count nothing, and reap the orphaned row.
+                db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                db.execute("COMMIT")
+                return jsonify({"error": "not found"}), 410
+
+            new_dl = current_dl + 1
+            delete_after = max_dl > 0 and new_dl >= max_dl
+
+            if delete_after:
+                db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            else:
+                db.execute("UPDATE files SET downloads = ? WHERE id = ?", (new_dl, file_id))
+
+            db.execute("COMMIT")
+        except Exception:
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+        record_download()
 
     file_size = s_path.stat().st_size
 
@@ -604,8 +645,6 @@ def api_file(file_id):
             if delete_after:
                 remove_blob(file_id)
 
-    record_download()
-
     response = Response(generate(), mimetype="application/octet-stream")
     response.headers["Content-Disposition"] = 'attachment; filename="' + file_id + '"'
     response.headers["Content-Length"] = str(file_size)
@@ -615,6 +654,12 @@ def api_file(file_id):
 
 @bp.route("/api/report", methods=["POST"])
 def api_report():
+    # Require a custom header so cross-origin "simple request" form POSTs (CSRF)
+    # can't suspend files — browsers won't send this header without a CORS
+    # preflight, and this app doesn't enable CORS.
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        return jsonify({"error": "forbidden"}), 403
+
     ip = request.remote_addr or "unknown"
     if not rate_limit_mem("report:" + ip, config.REPORT_RATE_LIMIT, config.RATE_WINDOW):
         return jsonify({"error": "rate limit exceeded"}), 429

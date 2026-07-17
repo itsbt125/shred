@@ -232,14 +232,14 @@ def api_admin_reports():
 
     db = get_db()
     total = db.execute("SELECT COUNT(*) AS c FROM reports").fetchone()["c"]
+    # No reporter IP is ever stored (see api_report) — don't select what isn't there.
     rows = db.execute(
-        "SELECT file_id, reason, ip, existed, created FROM reports ORDER BY created DESC LIMIT ? OFFSET ?",
+        "SELECT file_id, reason, existed, created FROM reports ORDER BY created DESC LIMIT ? OFFSET ?",
         (limit, offset),
     ).fetchall()
     reports = [{
         "file_id": r["file_id"],
         "reason": r["reason"],
-        "ip": r["ip"],
         "existed": bool(r["existed"]),
         "created": r["created"],
     } for r in rows]
@@ -259,8 +259,9 @@ def api_status():
         FROM files WHERE expiry > ?
     """, (now, now, now)).fetchone()
     start_time, up, dl = get_counters()
-    age_min = max(0, now - stats["oldest"]) if stats["oldest"] < now else 0
-    age_max = max(0, now - stats["newest"]) if stats["newest"] < now else 0
+    # MIN(created) is the oldest file -> largest age; MAX(created) the newest -> smallest.
+    oldest_age = max(0, now - stats["oldest"]) if stats["oldest"] < now else 0
+    newest_age = max(0, now - stats["newest"]) if stats["newest"] < now else 0
 
     rotation = None
     if config.UPLOAD_TOKEN_ROTATION > 0:
@@ -274,8 +275,8 @@ def api_status():
         "uptime": int(time.time() - start_time),
         "files_stored": stats["files_count"],
         "total_bytes": stats["total_size"],
-        "oldest_age_seconds": age_max,
-        "newest_age_seconds": age_min,
+        "oldest_age_seconds": oldest_age,
+        "newest_age_seconds": newest_age,
         "total_uploads_total": up,
         "total_downloads_total": dl,
         "limits": {
