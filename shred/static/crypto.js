@@ -121,6 +121,15 @@ function chunkIV(baseIv, index) {
   return iv;
 }
 
+// AAD per chunk = 4-byte big-endian chunk index. Binds each GCM tag to its
+// position in the stream so a malicious server can't reorder or swap ciphertext
+// chunks without breaking authentication (each chunk alone still verifies).
+function chunkAAD(index) {
+  const aad = new Uint8Array(4);
+  new DataView(aad.buffer).setUint32(0, index);
+  return aad;
+}
+
 async function readJsonError(response, fallback) {
   try {
     const body = await response.json();
@@ -207,7 +216,11 @@ async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onPro
     const chunkBuffer = await file.slice(start, end).arrayBuffer();
 
     const iv = chunkIV(baseIv, i);
-    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, chunkBuffer);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv, additionalData: chunkAAD(i) },
+      key,
+      chunkBuffer
+    );
 
     try {
       await uploadChunkWithRetry(upload_id, i, encrypted);
@@ -254,8 +267,13 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
   }
 
   async function decryptChunk(ctBytes) {
-    const iv = chunkIV(baseIv, chunkIndex++);
-    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, ctBytes);
+    const index = chunkIndex++;
+    const iv = chunkIV(baseIv, index);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: iv, additionalData: chunkAAD(index) },
+      key,
+      ctBytes
+    );
     return new Uint8Array(decrypted);
   }
 
@@ -462,11 +480,15 @@ async function downloadGroupAsZip(files, filenames, contentKey, zipName, onProgr
   }
   function uniqueName(name, index) {
     let n = name ? safeZipName(name) : ("file-" + (index + 1));
+    // Key/increment on the sanitized n, never the raw name: raw names that
+    // sanitize identically must share one counter, and the unnamed fallback has
+    // no raw name at all (usedNames[undefined] would yield NaN).
     if (usedNames[n]) {
       const dot = n.lastIndexOf(".");
       const base = dot > 0 ? n.slice(0, dot) : n;
       const ext = dot > 0 ? n.slice(dot) : "";
-      n = base + "-" + (usedNames[name]++) + ext;
+      usedNames[n] += 1;
+      n = base + "-" + usedNames[n] + ext;
     } else {
       usedNames[n] = 1;
     }

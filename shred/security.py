@@ -57,6 +57,12 @@ def rate_limit(key, max_count, window=None):
 _memory_lock = threading.Lock()
 _memory_hits = {}
 
+# Buckets are created on first request from an IP/key and never removed by the
+# per-request path, so under enough distinct clients (e.g. rotating IPv6 hosts)
+# the map would grow without bound. Once past this threshold, sweep buckets whose
+# entire window has lapsed — if the newest hit is older than the cutoff, all are.
+_MEMORY_SWEEP_THRESHOLD = 10000
+
 
 def rate_limit_mem(key, max_count, window=None):
     if window is None:
@@ -64,6 +70,11 @@ def rate_limit_mem(key, max_count, window=None):
     now = time.time()
     cutoff = now - window
     with _memory_lock:
+        if len(_memory_hits) >= _MEMORY_SWEEP_THRESHOLD:
+            for dead in [
+                k for k, v in _memory_hits.items() if not v or v[-1] <= cutoff
+            ]:
+                del _memory_hits[dead]
         hits = _memory_hits.get(key)
         if hits is None:
             hits = []

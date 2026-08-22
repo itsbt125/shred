@@ -59,7 +59,22 @@ def _handle_404(e):
 
 
 def _handle_500(e):
-    return jsonify({"error": "internal error"}), 500
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "internal error"}), 500
+    # Same generic panel styling as the 404 page; expired.html itself hardcodes
+    # the 410 copy, so render a minimal inline page instead.
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<title>shred — error</title>'
+        '<link rel="stylesheet" href="/static/style.css"></head><body>'
+        '<div class="wrap"><main><div class="error-panel">'
+        '<div class="error-code">500 &mdash; internal error</div>'
+        '<div class="error-title">something went wrong</div>'
+        '<p class="error-desc">the server hit an unexpected error. '
+        'nothing you shared was exposed — try again from the start.</p>'
+        '<a href="/" class="btn">back to shred</a></div></main></div></body></html>',
+        500,
+    )
 
 
 def create_app(bootstrap=True):

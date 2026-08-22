@@ -29,7 +29,6 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "shred.db"
 
 MAX_FILE_SIZE = _env_int("MAX_SIZE_BYTES", 2 * 1024**3)
-MAX_CIPHERTEXT_SIZE = MAX_FILE_SIZE + 1024**2
 MAX_PASTE_SIZE = _env_int("MAX_PASTE_SIZE", 5 * 1024**2)
 
 # Client encrypts in fixed-size chunks (AES-GCM), appending one auth tag per chunk.

@@ -40,7 +40,11 @@ limit.
 | Filenames | encrypted under the content key |
 
 All encryption/decryption is in-browser via the Web Crypto API. The server is a
-dumb ciphertext store.
+dumb ciphertext store. Each ciphertext chunk is GCM-authenticated with its chunk
+index as additional data, so chunks can't be reordered or swapped undetected.
+Password mode uses PBKDF2-SHA256 (600k iterations) — the strongest KDF available
+in native Web Crypto; Argon2id would be preferable but requires shipping WASM,
+which conflicts with the zero-client-dependencies goal.
 
 ## Stack
 

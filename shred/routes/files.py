@@ -515,6 +515,10 @@ def api_meta(file_id):
     if not valid_id(file_id):
         return jsonify({"error": "not found"}), 404
 
+    ip = request.remote_addr or "unknown"
+    if not rate_limit_mem("meta:" + ip, config.DOWNLOAD_RATE_LIMIT, config.RATE_WINDOW):
+        return jsonify({"error": "rate limit exceeded"}), 429
+
     db = get_db()
     row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
 
