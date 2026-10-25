@@ -336,5 +336,127 @@ def test_orphan_blob_sweep(client):
     assert fresh_orphan.exists()       # within grace period — could be mid-finish
 
 
+# --- hardening regressions -------------------------------------------------------
+
+def test_admin_log_not_written_for_rate_limited_requests(client, monkeypatch):
+    """admin_auth_log is written from an unauthenticated endpoint. Logging a row
+    for rate-limited (429) attempts made it an unbounded pre-auth disk-fill
+    primitive — and a full disk breaks downloads, which need a DB write."""
+    monkeypatch.setattr(config, "NO_LOGS", False)
+    monkeypatch.setattr(config, "ADMIN_RATE_LIMIT", 5)
+
+    for _ in range(60):
+        client.get("/api/admin/overview")  # no token: 5 recorded, the rest get 429
+
+    db = sqlite3.connect(str(config.DB_PATH))
+    n = db.execute("SELECT COUNT(*) FROM admin_auth_log").fetchone()[0]
+    db.close()
+    assert n == 5, f"one row per request would be 60; got {n}"
+
+
+def test_admin_rate_limited_still_rejected(client, monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_RATE_LIMIT", 2)
+    codes = [client.get("/api/admin/overview").status_code for _ in range(4)]
+    assert codes == [401, 401, 429, 429]
+
+
+def test_admin_log_pruned_by_retention_and_row_cap(client, monkeypatch):
+    monkeypatch.setattr(config, "NO_LOGS", False)
+    monkeypatch.setattr(config, "ADMIN_AUTH_LOG_MAX", 10)
+    monkeypatch.setattr(config, "ADMIN_AUTH_LOG_RETENTION", 3600)
+
+    db = sqlite3.connect(str(config.DB_PATH))
+    now = int(time.time())
+    db.executemany(
+        "INSERT INTO admin_auth_log (success, reason, created) VALUES (?, ?, ?)",
+        [(0, "unauthorized", now - 7200)] * 5 + [(0, "unauthorized", now)] * 50,
+    )
+    db.commit()
+    db.close()
+
+    run_cleanup_once()
+
+    db = sqlite3.connect(str(config.DB_PATH))
+    n = db.execute("SELECT COUNT(*) FROM admin_auth_log").fetchone()[0]
+    db.close()
+    assert n == 10, f"aged-out rows should be gone and the rest capped to 10; got {n}"
+
+
+def test_ensure_admin_token_converges_across_workers(monkeypatch):
+    """Workers booting concurrently must agree on the admin token. A read-then-
+    INSERT OR REPLACE let two workers each write a different value, so /admin
+    worked on one worker only and the loser's token died on the next restart."""
+    from shred import db as db_module
+
+    monkeypatch.setattr(config, "UPLOAD_TOKEN_ROTATION", 3600)
+    d = sqlite3.connect(str(config.DB_PATH))
+    d.execute("DELETE FROM kv WHERE key = 'admin_token'")
+    d.commit()
+    d.close()
+
+    tokens = []
+    for _ in range(3):  # three workers each running bootstrap
+        monkeypatch.setattr(config, "ADMIN_TOKEN", "")
+        db_module.ensure_admin_token()
+        tokens.append(config.ADMIN_TOKEN)
+
+    assert tokens[0]
+    assert len(set(tokens)) == 1, f"workers disagreed: {tokens}"
+
+    d = sqlite3.connect(str(config.DB_PATH))
+    persisted = d.execute("SELECT value FROM kv WHERE key = 'admin_token'").fetchone()[0]
+    d.close()
+    assert persisted == tokens[0]
+
+
+def test_chunk_index_unicode_digits_rejected(client):
+    """'\u00b2'.isdigit() is True but int('\u00b2') raises -> used to be an unhandled 500."""
+    r = client.post("/api/upload/init", data=valid_meta(100))
+    uid = r.get_json()["upload_id"]
+    for bad in ["\u00b2", "\u0661\u0662", "\u06f1\u06f2"]:
+        r = client.post(
+            "/api/upload/chunk",
+            data={"upload_id": uid, "chunk_index": bad, "chunk": (io.BytesIO(b"x"), "c.enc")},
+            content_type="multipart/form-data",
+        )
+        assert r.status_code == 400, (bad, r.status_code)
+
+
+def test_partial_orphan_swept(client):
+    """A .part with no pending_uploads row leaked forever: cleanup only reaped
+    partials belonging to stale rows, and its orphan glob covered only .enc."""
+    partial_dir = config.UPLOAD_DIR / "partial"
+    partial_dir.mkdir(parents=True, exist_ok=True)
+    orphan = partial_dir / "orphanorphanorph1.part"
+    orphan.write_bytes(b"x" * 1024)
+    old = time.time() - 3600
+    os.utime(orphan, (old, old))
+
+    run_cleanup_once()
+    assert not orphan.exists()
+
+
+def test_live_partial_not_swept(client):
+    """An in-progress upload's partial file must survive cleanup."""
+    r = client.post("/api/upload/init", data=valid_meta(100))
+    uid = r.get_json()["upload_id"]
+    run_cleanup_once()
+    assert (config.UPLOAD_DIR / "partial" / (uid + ".part")).exists()
+
+
+def test_orphan_blob_at_odd_path_swept(client):
+    """The sweep must delete the path it actually found. It used to call
+    remove_blob(file_id), which recomputes the canonical shard path, so a blob
+    at a non-canonical path was matched and then silently left on disk."""
+    odd = config.UPLOAD_DIR / "aa" / "bb" / "wwww-wwww-wwww.enc"
+    odd.parent.mkdir(parents=True, exist_ok=True)
+    odd.write_bytes(b"stale")
+    old = time.time() - 3600
+    os.utime(odd, (old, old))
+
+    run_cleanup_once()
+    assert not odd.exists()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
