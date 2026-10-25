@@ -57,8 +57,10 @@ CHUNK_RATE_WINDOW = _env_int("CHUNK_RATE_WINDOW", 60)
 # Max simultaneous in-flight /api/upload/chunk requests per IP (in-memory, per worker).
 MAX_CONCURRENT_CHUNKS_PER_IP = _env_int("MAX_CONCURRENT_CHUNKS_PER_IP", 8)
 
-# Global ceiling on in-progress (pending) uploads; 0 = unlimited.
-MAX_PENDING_UPLOADS = _env_int("MAX_PENDING_UPLOADS", 0)
+# Global ceiling on in-progress (pending) uploads; 0 = unlimited. Bounded by
+# default: each accepted init leaves a partial file and a DB row for up to
+# PENDING_UPLOAD_TTL, and init is unauthenticated when upload gating is off.
+MAX_PENDING_UPLOADS = _env_int("MAX_PENDING_UPLOADS", 500)
 
 MIN_FREE_DISK_BYTES = _env_int("MIN_FREE_DISK_BYTES", 1024**3)
 
@@ -151,6 +153,13 @@ if REPORT_ACTION not in ("suspend", "off"):
 # because IPs are held in memory temporarily. Recommended for operators who want a
 # minimal disk footprint; someone who needs the persisted admin log just won't enable it.
 NO_LOGS = os.environ.get("NO_LOGS", "0").strip() == "1"
+
+# Bounds on the persisted admin auth log. That table is written from an
+# unauthenticated endpoint (/api/admin/*), so without a bound anyone who can
+# reach the app can append rows until the disk fills — and the upload-side
+# MIN_FREE_DISK_BYTES guard does not cover DB writes. 0 disables that bound.
+ADMIN_AUTH_LOG_RETENTION = _env_int("ADMIN_AUTH_LOG_RETENTION", 7 * 86400)
+ADMIN_AUTH_LOG_MAX = _env_int("ADMIN_AUTH_LOG_MAX", 5000)
 
 
 def token_gating_enabled():

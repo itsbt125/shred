@@ -36,6 +36,26 @@ def remove_partial(upload_id):
         pass
 
 
+def remove_blob_path(path):
+    """Deletes a blob by the path it was actually found at, then prunes empty
+    shard dirs.
+
+    The orphan sweep must use this rather than remove_blob(file_id): that helper
+    recomputes the canonical shard path from the id, so a blob sitting at a
+    non-canonical location is found by the sweep, matched, and then not actually
+    deleted — permanently leaking disk.
+    """
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+    for parent in (Path(path).parent, Path(path).parent.parent):
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+
+
 def remove_blob(file_id):
     s_path = storage_path(file_id)
     try:

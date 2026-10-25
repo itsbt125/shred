@@ -151,14 +151,21 @@ def ensure_admin_token():
         return
     db = sqlite3.connect(str(config.DB_PATH))
     db.row_factory = sqlite3.Row
-    row = db.execute("SELECT value FROM kv WHERE key = 'admin_token'").fetchone()
-    if row:
-        config.ADMIN_TOKEN = row["value"]
-    else:
-        config.ADMIN_TOKEN = secrets.token_urlsafe(24)
-        db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('admin_token', ?)", (config.ADMIN_TOKEN,))
+    db.execute("PRAGMA busy_timeout = 5000")
+    try:
+        # INSERT OR IGNORE, then re-read — all workers converge on one value.
+        # A read-then-INSERT OR REPLACE let two gunicorn workers both observe "no
+        # row" and each write a different token, so they disagreed about the admin
+        # token (and the loser's token silently died on the next restart).
+        db.execute(
+            "INSERT OR IGNORE INTO kv (key, value) VALUES ('admin_token', ?)",
+            (secrets.token_urlsafe(24),),
+        )
+        row = db.execute("SELECT value FROM kv WHERE key = 'admin_token'").fetchone()
         db.commit()
-    db.close()
+    finally:
+        db.close()
+    config.ADMIN_TOKEN = row["value"]
     # Deliberately do NOT echo the token: writing secrets to logs/stdout is a leak.
     # Set ADMIN_TOKEN in .env to provide your own; the auto-generated value is stored
     # in the database key-value store and retrievable only by someone with DB access.

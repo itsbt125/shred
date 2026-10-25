@@ -94,6 +94,15 @@ _admin_ring = []
 
 
 def record_admin_auth(success, reason):
+    """Records an admin auth attempt. IP-less: success / reason / timestamp only.
+
+    Deliberately NOT called for rate-limited requests (see require_admin). This
+    endpoint is unauthenticated, and the rate limiter never gated the write path,
+    so logging 429s let an anonymous client append rows without bound until the
+    disk filled — taking downloads down with it, since /api/file writes to the DB.
+    Only attempts that actually reach the token check are recorded, and those are
+    already capped by ADMIN_RATE_LIMIT per IP per window.
+    """
     entry = {"success": success, "reason": reason, "created": int(time.time())}
     with _admin_ring_lock:
         _admin_ring.append(entry)
@@ -203,7 +212,8 @@ def resolve_upload_credential(provided):
 def require_admin():
     ip = request.remote_addr or "unknown"
     if not rate_limit_mem("admin:" + ip, config.ADMIN_RATE_LIMIT, config.RATE_WINDOW):
-        record_admin_auth(0, "rate-limited")
+        # No record_admin_auth() here on purpose: it would be an unbounded,
+        # unauthenticated write. See record_admin_auth's docstring.
         return jsonify({"error": "rate limit exceeded"}), 429
     # Header only — a query param would leak into proxy access logs and Referer headers.
     provided = request.headers.get("X-Admin-Token", "")

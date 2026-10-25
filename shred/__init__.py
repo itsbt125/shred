@@ -98,6 +98,19 @@ def create_app(bootstrap=True):
             x_for=config.TRUSTED_PROXY_COUNT,
             x_proto=config.TRUSTED_PROXY_COUNT,
         )
+        # print(), not logging: the "shred" logger is pinned to ERROR above.
+        # The danger runs the other way from the count==0 warning below: with
+        # proxying trusted, anyone who can reach gunicorn directly can forge
+        # X-Forwarded-For and so bypass per-IP rate limiting and IP allowlisting.
+        print(
+            f"[shred] NOTE TRUSTED_PROXY_COUNT={config.TRUSTED_PROXY_COUNT}: "
+            "X-Forwarded-For/-Proto are now trusted. This is only safe if the app "
+            "is NOT reachable except through that many proxies — bind gunicorn to "
+            "127.0.0.1 and put TLS in front of it. If clients can reach the app "
+            "directly they can forge X-Forwarded-For, which silently defeats "
+            "rate limiting AND UPLOAD_IP_ALLOWLIST.",
+            flush=True,
+        )
     else:
         # print(), not logging: the "shred" logger is pinned to ERROR above and would swallow this.
         print(

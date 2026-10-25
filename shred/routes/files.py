@@ -245,7 +245,11 @@ def api_upload_init():
 def api_upload_chunk():
     upload_id = request.form.get("upload_id", "")
     chunk_index_str = request.form.get("chunk_index", "")
-    if not valid_upload_id(upload_id) or not chunk_index_str.isdigit():
+    # isascii() too: str.isdigit() accepts superscripts and other Unicode digits
+    # that int() then rejects, which would surface as an unhandled 500.
+    if not valid_upload_id(upload_id) or not (
+        chunk_index_str.isascii() and chunk_index_str.isdigit()
+    ):
         return jsonify({"error": "missing upload_id or chunk_index"}), 400
     if "chunk" not in request.files:
         return jsonify({"error": "no chunk"}), 400
