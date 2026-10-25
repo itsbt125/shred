@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>shred — temporary file sharing</title>
 <link rel="icon" href="/static/favicon.svg">
+<link rel="preload" href="/static/fonts/Redaction-regular.woff" as="font" type="font/woff" crossorigin>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -92,11 +93,13 @@
     </section>
 
     <section id="state-result" class="state" hidden>
-      <div class="result-status" id="result-status">done.</div>
+      <div class="result-status" id="result-status" aria-live="polite">done.</div>
 
       <div class="field-label">share link</div>
       <div class="result-link">
-        <div class="result-link-value" id="share-link"></div>
+        <!-- tabindex: the value scrolls horizontally, and a plain div can't take
+             focus, so keyboard users had no way to see the end of a long link -->
+        <div class="result-link-value" id="share-link" tabindex="0" role="textbox" aria-readonly="true" aria-label="share link"></div>
         <button class="copy-btn" data-copy-target="share-link">copy</button>
       </div>
 

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>shred — files</title>
 <link rel="icon" href="/static/favicon.svg">
+<link rel="preload" href="/static/fonts/Redaction-regular.woff" as="font" type="font/woff" crossorigin>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -37,18 +38,18 @@
           <button type="button" id="group-password-toggle-btn" class="password-toggle-btn" aria-label="show passphrase">show</button>
         </div>
         <button class="btn btn-block" id="group-unlock-btn" disabled>unlock files</button>
-        <div class="download-status" id="group-password-status"></div>
+        <div class="download-status" id="group-password-status" aria-live="polite"></div>
       </div>
 
       <div class="group-zip-actions" id="group-zip-actions" hidden>
         <button type="button" class="btn btn-block" id="group-zip-btn">download all as .zip</button>
         <div class="upload-progress" id="group-zip-progress"><div class="upload-progress-fill" id="group-zip-progress-fill"></div></div>
-        <div class="download-status" id="group-zip-status"></div>
+        <div class="download-status" id="group-zip-status" aria-live="polite"></div>
       </div>
 
       <div class="group-list" id="group-list"></div>
 
-      <div class="download-status" id="group-status"></div>
+      <div class="download-status" id="group-status" aria-live="polite"></div>
     </div>
 
     <a href="/" class="link-secondary">&larr; upload your own files</a>

@@ -23,6 +23,13 @@
   --faint: #888;
   --border: #333;
   --line: #222;
+  /* Placeholder text needs its own token: --border (#333) is a hairline colour
+     and only 1.7:1 on black, so placeholder copy was effectively invisible.
+     #7a7a7a is 4.9:1 — above the 4.5:1 AA floor for small text. */
+  --placeholder: #7a7a7a;
+  /* Slightly raised surface. #222 with --faint text lands at 4.49:1, just under
+     AA; #1a1a1a puts it at 4.9:1. */
+  --raised: #1a1a1a;
 }
 
 * {
@@ -36,7 +43,9 @@
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
@@ -120,8 +129,8 @@ main {
   padding: 12px 0 40px;
 }
 
-.state[hidden] {
-  display: none;
+.state {
+  display: block;
 }
 
 h1 {
@@ -240,7 +249,7 @@ h1 {
 }
 
 .passphrase-row input::placeholder {
-  color: var(--border);
+  color: var(--placeholder);
 }
 
 .passphrase-row input:focus {
@@ -532,7 +541,7 @@ button.link-secondary:hover {
 }
 
 .password-input-wrap input::placeholder {
-  color: var(--border);
+  color: var(--placeholder);
 }
 
 .password-input-wrap input:focus {
@@ -854,7 +863,7 @@ button.link-secondary:hover {
   color: var(--faint);
   word-break: break-all;
   padding: 10px 12px;
-  background: var(--line);
+  background: var(--raised);
 }
 
 .admin-token-value.revealed {
@@ -902,7 +911,7 @@ button.link-secondary:hover {
 }
 
 .invite-create-row input::placeholder {
-  color: var(--border);
+  color: var(--placeholder);
 }
 
 .invite-create-row input:focus {
@@ -1011,7 +1020,7 @@ button.link-secondary:hover {
 }
 
 .badge {
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -1114,7 +1123,7 @@ button.link-secondary:hover {
 }
 
 .paste-textarea::placeholder {
-  color: var(--border);
+  color: var(--placeholder);
 }
 
 .paste-textarea:focus {

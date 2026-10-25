@@ -416,9 +416,9 @@ function initUploadPage() {
     currentFileId = fileId;
     currentDeleteToken = deleteToken;
     currentGroupMembers = null;
-    if (deleteToken) {
-      try { localStorage.setItem("shred_delete_" + fileId, deleteToken); } catch (e) {}
-    }
+    // Delete tokens are intentionally NOT persisted: nothing ever reads them back,
+    // so writing them to localStorage only leaves a live capability for every
+    // upload sitting on disk indefinitely.
     if (deleteLinkBtn) {
       deleteLinkBtn.hidden = false;
       deleteLinkBtn.textContent = "delete this link";
@@ -459,11 +459,6 @@ function initUploadPage() {
     currentFileId = null;
     currentDeleteToken = null;
     currentGroupMembers = members;
-    try {
-      members.forEach(function (m) {
-        if (m.delete_token) localStorage.setItem("shred_delete_" + m.id, m.delete_token);
-      });
-    } catch (e) {}
 
     if (deleteLinkBtn) {
       deleteLinkBtn.hidden = false;
@@ -513,6 +508,8 @@ function initUploadPage() {
       })).then(function (results) {
         var failed = results.filter(function (r) { return !r.ok; });
         results.forEach(function (r) {
+          // Clean up values written by older versions of this page, which used to
+          // persist delete tokens to localStorage (and never read them back).
           if (r.ok) { try { localStorage.removeItem("shred_delete_" + r.target.id); } catch (e) {} }
         });
 
