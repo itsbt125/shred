@@ -121,13 +121,34 @@ function chunkIV(baseIv, index) {
   return iv;
 }
 
-// AAD per chunk = 4-byte big-endian chunk index. Binds each GCM tag to its
-// position in the stream so a malicious server can't reorder or swap ciphertext
-// chunks without breaking authentication (each chunk alone still verifies).
-function chunkAAD(index) {
+// AAD per chunk = 4-byte big-endian chunk index ++ 1-byte "this is the final
+// chunk" flag. The index binds each GCM tag to its position so a malicious
+// server can't reorder or swap ciphertext chunks; the final-chunk flag is what
+// makes TRUNCATION detectable. Without it, a server could withhold whole
+// trailing chunks and the decoder would hand back a shortened file with no
+// error at all, because every remaining chunk still verifies on its own.
+function chunkAAD(index, isFinal) {
+  const aad = new Uint8Array(5);
+  const view = new DataView(aad.buffer);
+  view.setUint32(0, index);
+  view.setUint8(4, isFinal ? 1 : 0);
+  return aad;
+}
+
+// Pre-flag AAD (index only), so links created before the final-chunk flag still
+// decrypt. The format is detected per-stream from chunk 0 — see createDecryptTransform.
+function chunkAADv1(index) {
   const aad = new Uint8Array(4);
   new DataView(aad.buffer).setUint32(0, index);
   return aad;
+}
+
+async function encryptChunk(key, baseIv, index, isFinal, plaintext) {
+  return crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: chunkIV(baseIv, index), additionalData: chunkAAD(index, isFinal) },
+    key,
+    plaintext
+  );
 }
 
 async function readJsonError(response, fallback) {
@@ -215,12 +236,7 @@ async function chunkedUploadFile(file, key, baseIv, metadata, uploadToken, onPro
     const end = Math.min(start + CHUNK_SIZE, file.size);
     const chunkBuffer = await file.slice(start, end).arrayBuffer();
 
-    const iv = chunkIV(baseIv, i);
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: iv, additionalData: chunkAAD(i) },
-      key,
-      chunkBuffer
-    );
+    const encrypted = await encryptChunk(key, baseIv, i, i === totalChunks - 1, chunkBuffer);
 
     try {
       await uploadChunkWithRetry(upload_id, i, encrypted);
@@ -258,6 +274,7 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
   let buffer = new Uint8Array(0);
   let chunkIndex = 0;
   let bytesIn = 0;
+  let mode = null; // null until chunk 0 decides: "v2" (final-chunk flag) or "v1" (legacy)
 
   function append(next) {
     const combined = new Uint8Array(buffer.length + next.length);
@@ -266,15 +283,53 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
     buffer = combined;
   }
 
-  async function decryptChunk(ctBytes) {
-    const index = chunkIndex++;
-    const iv = chunkIV(baseIv, index);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: iv, additionalData: chunkAAD(index) },
+  async function decryptRaw(aad, ctBytes, index) {
+    return crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: chunkIV(baseIv, index), additionalData: aad },
       key,
       ctBytes
     );
-    return new Uint8Array(decrypted);
+  }
+
+  // Chunk 0 decides the format. Exactly one candidate can authenticate, so a
+  // hostile server can't steer this — a wrong AAD fails the GCM tag rather than
+  // silently succeeding.
+  //
+  // The finality of the candidate must match what we know about the stream:
+  // if more data follows, chunk 0 is genuinely not final; if this is all we
+  // have, it must carry the final flag. Offering the opposite variant here
+  // would let a stream truncated to exactly one full chunk decrypt cleanly,
+  // since a full chunk's ciphertext looks identical either way.
+  async function detectMode(ctBytes, isFinal) {
+    const index = 0;
+    const candidates = isFinal
+      ? [["v2", chunkAAD(index, true)], ["v1", chunkAADv1(index)]]
+      : [["v2", chunkAAD(index, false)], ["v1", chunkAADv1(index)]];
+    let lastErr = null;
+    for (const [candidateMode, aad] of candidates) {
+      try {
+        const out = await decryptRaw(aad, ctBytes, index);
+        mode = candidateMode;
+        return out;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error("corrupt ciphertext");
+  }
+
+  async function decryptChunk(ctBytes, isFinal) {
+    const index = chunkIndex;
+    let plaintext;
+    if (mode === null) {
+      plaintext = await detectMode(ctBytes, isFinal);
+    } else if (mode === "v2") {
+      plaintext = await decryptRaw(chunkAAD(index, isFinal), ctBytes, index);
+    } else {
+      plaintext = await decryptRaw(chunkAADv1(index), ctBytes, index);
+    }
+    chunkIndex++;
+    return new Uint8Array(plaintext);
   }
 
   return new TransformStream({
@@ -283,18 +338,27 @@ function createDecryptTransform(key, baseIv, onBytesDecrypted) {
       bytesIn += chunk.length;
       while (buffer.length > fullChunkCtSize) {
         const ctSlice = buffer.subarray(0, fullChunkCtSize);
-        const plaintext = await decryptChunk(ctSlice);
+        const plaintext = await decryptChunk(ctSlice, false);
         buffer = buffer.slice(fullChunkCtSize);
         controller.enqueue(plaintext);
         if (onBytesDecrypted) onBytesDecrypted(bytesIn);
       }
     },
     async flush(controller) {
-      if (buffer.length === 0) return;
+      if (buffer.length === 0) {
+        // Every v2 stream ends with a chunk explicitly marked final, and a final
+        // full-size chunk is never drained by transform() (that needs strictly
+        // more data). So an empty buffer here means trailing chunks were withheld:
+        // refuse rather than hand back a silently shortened file.
+        if (mode === "v2") {
+          throw new Error("corrupt ciphertext: final chunk missing (stream was truncated)");
+        }
+        return;
+      }
       if (buffer.length < TAG_LENGTH) {
         throw new Error("corrupt ciphertext: truncated chunk");
       }
-      const plaintext = await decryptChunk(buffer);
+      const plaintext = await decryptChunk(buffer, true);
       controller.enqueue(plaintext);
       if (onBytesDecrypted) onBytesDecrypted(bytesIn);
     },
